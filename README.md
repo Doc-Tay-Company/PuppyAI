@@ -92,14 +92,14 @@ right-click development menu) to exit.
 
 ## Mascot states
 
-| State | Sheet row | Purpose |
+| State | Frames | Purpose |
 | --- | --- | --- |
-| `IDLE` | 1 | Default desktop state |
+| `IDLE` | 3 | Default desktop state |
 | `HAPPY` | 2 | Positive reactions |
-| `THINKING` | 3 | Processing requests |
-| `TALKING` | 4 | Delivering responses |
-| `STUDYING` | 5 | Study mode |
-| `SLEEPING` | 6 | Five idle minutes without a panel or active study timer |
+| `THINKING` | 2 | Processing requests |
+| `TALKING` | 2 | Delivering responses |
+| `STUDYING` | 2 | Study mode |
+| `SLEEPING` | 2 | Five idle minutes without a panel or active study timer |
 
 `MascotSprites` owns the animation timing, `MascotAnimator` drives the frames,
 and `MascotStateService` is the single place the rest of the application asks
@@ -107,26 +107,19 @@ for a state change. `MascotController` also owns the inactivity timer, the
 two-minute notification timer and the random click/wake lines in
 `MascotMessages`.
 
-## Sprite sheet
+## Sprite images
 
-`src/main/resources/sprites/new_spritesheet.png` is a **6 × 6 grid**: six
-animation frames per row and one row per state, in the order shown above. The
-current sheet uses 128 × 128 px cells, but the animator derives the frame size
-from the image, so any sheet that stays on the 6 × 6 grid works without code
-changes. Frames are played by moving the image view's viewport, which keeps
-state switches cheap.
+Each animation uses separate transparent PNG frames in
+`src/main/resources/sprites/<state>/`, named `0.png`, `1.png`, and so on. The
+animator loads them once and switches the displayed image; it does not slice a
+spritesheet.
 
-The animator cuts exact cells, so each frame must be drawn on the same anchor:
-centred horizontally and with the paws on a common ground line, with effects
-kept inside the cell. Breaking that rule makes animations shake and lets parts
-of one row appear in the next.
+Frame timing is per image: IDLE, HAPPY, STUDYING and TALKING use 2,000 ms;
+THINKING uses 500 ms; SLEEPING uses 1,000 ms. Keep character scale and paw
+baseline consistent within each state to avoid visible jumps.
 
-Use `docs/spritesheet-guide.png` (768 × 768, 128 × 128 px cells) as a trace layer
-and follow [docs/SPRITESHEET_GUIDE.md](docs/SPRITESHEET_GUIDE.md) for the anchor
-rules, row order, an AI prompt and a troubleshooting table.
-
-`src/main/resources/icons/puppy.png` is the window/taskbar icon, cropped from
-the idle frame of the sheet.
+The old spritesheet template and instructions are retained as legacy references
+only. `src/main/resources/icons/puppy.png` is the window/taskbar icon.
 
 ## Architecture
 
@@ -145,8 +138,8 @@ Infrastructure        Ollama HTTP client, document extraction, configuration,
 | `ServiceRegistry` | Creates and shuts down application services |
 | `AppConfig` | App name, version, always-on-top flag, data directory, Ollama URL and model |
 | `MascotController` | Expandable shell, mascot interactions, sleep/notification timers, panel navigation and drag-safe movement |
-| `MascotAnimator` | Frame timing and viewport switching |
-| `MascotSprites` | Sheet layout and per-state animation metadata |
+| `MascotAnimator` | Frame timing and per-state image switching |
+| `MascotSprites` | Ordered frame resources and per-state animation metadata |
 | `MascotMessages` | Random click, wake and notification lines |
 | `MarkdownRenderer` | Safe Markdown-to-JavaFX rendering for chat bubbles |
 | `MascotStateService` | Thread-safe current state with listener notifications |
@@ -188,7 +181,7 @@ src/main/resources/
 ├── css/          puppy.css
 ├── fxml/         shell.fxml, chat.fxml, study.fxml, settings.fxml
 ├── icons/        puppy.png
-└── sprites/      new_spritesheet.png
+└── sprites/      state folders with numbered PNG frames
 src/test/java/com/puppy/
 ├── ai/           OllamaClientTest
 ├── controller/   FxmlLayoutTest

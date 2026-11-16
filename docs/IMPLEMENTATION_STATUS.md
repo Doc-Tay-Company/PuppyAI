@@ -21,14 +21,14 @@ Last updated: 2026-11-15
   transparent, always-on-top window positioned in the bottom-right screen corner.
 - Draggable mascot with clean shutdown through `Application.stop()`.
 - Six mascot states (`MascotState`) driven by `DefaultMascotStateService`.
-- `MascotAnimator` plays the supplied 6 × 6 spritesheet through an ImageView
-  viewport, with per-state frame timing and a global speed multiplier.
+- `MascotAnimator` plays separately loaded PNG frames through an ImageView,
+  with per-state frame timing and a global speed multiplier.
 - `ServiceRegistry` builds and owns services; `ThreadManager` provides a daemon
   worker pool for later milestones and is closed on exit.
 - Right-click menu to switch animations and quit (the window has no title bar).
-- Placeholder-friendly assets: spritesheet at `resources/sprites/`, icon at
+- Separate numbered state frames at `resources/sprites/`, icon at
   `resources/icons/`.
-- Tests: spritesheet grid/artwork contract and mascot state service behaviour.
+- Tests: frame resource/count/timing contract and mascot state service behaviour.
 
 ## Completed (milestone 2)
 
@@ -138,11 +138,9 @@ Last updated: 2026-11-15
   model. Up to five files can be attached per conversation; the attachment bar
   restores when an archived conversation is selected. Removing a chip removes
   its context from later prompts.
-- **Sprites:** the sheet is a 6 × 6 grid (row per state, 6 frames per row,
-  768 × 768 with 128 × 128 px cells today). Frame size is derived at runtime, so
-  new art with the same grid shape requires no code change.
-  `docs/SPRITESHEET_GUIDE.md` specifies that grid and ships a trace template at
-  `docs/spritesheet-guide.png`.
+- **Sprites:** numbered transparent PNG frames are stored separately by state.
+  `MascotSprites` defines their order and per-image timing; the animator loads
+  each image once and switches images during playback.
 - **State priority:** `DefaultMascotStateService` currently lets the latest
   request win; the priority rules (study must not be interrupted by an idle
   refresh) belong to milestone 6.
@@ -186,8 +184,8 @@ Last updated: 2026-11-15
 3. The mascot's visual state is application state, owned by
    `MascotStateService`, not by animation callbacks — this prevents flicker
    while tokens stream.
-4. Animations are played by moving an ImageView viewport over one loaded sheet,
-   which avoids per-frame image loading and keeps switching cheap.
+4. Mascot frame images are loaded once and reused during playback; state changes
+   do not reload image resources.
 5. Background work is confined to the `ThreadManager` pool; UI updates are
    marshalled with `Platform.runLater`. Streamed tokens are batched so a fast
    model cannot flood the JavaFX Application Thread.
