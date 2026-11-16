@@ -21,14 +21,14 @@ Last updated: 2026-11-09
   transparent, always-on-top window positioned in the bottom-right screen corner.
 - Draggable mascot with clean shutdown through `Application.stop()`.
 - Six mascot states (`MascotState`) driven by `DefaultMascotStateService`.
-- `MascotAnimator` plays the supplied 6 × 6 spritesheet through an ImageView
-  viewport, with per-state frame timing and a global speed multiplier.
+- `MascotAnimator` plays separately loaded PNG frames through an ImageView,
+  with per-state frame timing and a global speed multiplier.
 - `ServiceRegistry` builds and owns services; `ThreadManager` provides a daemon
   worker pool for later milestones and is closed on exit.
 - Right-click menu to switch animations and quit (the window has no title bar).
-- Placeholder-friendly assets: spritesheet at `resources/sprites/`, icon at
+- Separate numbered state frames at `resources/sprites/`, icon at
   `resources/icons/`.
-- Tests: spritesheet grid/artwork contract and mascot state service behaviour.
+- Tests: frame resource/count/timing contract and mascot state service behaviour.
 
 ## Completed (milestone 2)
 
@@ -68,11 +68,9 @@ Last updated: 2026-11-09
 - **JDK:** the plan targets Java 25; this machine has JDK 24, and JavaFX 25 needs
   JDK 23+, so `pom.xml` sets `java.version` to 24. Bump the property after
   installing JDK 25.
-- **Sprites:** the sheet is a 6 × 6 grid (row per state, 6 frames per row,
-  768 × 768 with 128 × 128 px cells today). Frame size is derived at runtime, so
-  new art with the same grid shape requires no code change.
-  `docs/SPRITESHEET_GUIDE.md` specifies that grid and ships a trace template at
-  `docs/spritesheet-guide.png`.
+- **Sprites:** each state loads a short, ordered list of numbered transparent
+  PNGs from its resource folder. Frame counts and per-image timing are declared
+  in `MascotSprites`; the animator loads each frame once and swaps images.
 - **State priority:** `DefaultMascotStateService` currently lets the latest
   request win; the priority rules (study must not be interrupted by an idle
   refresh) belong to milestone 6.
@@ -81,10 +79,8 @@ Last updated: 2026-11-09
 
 ## Known bugs / limitations
 
-- The previous mascot sheet was not anchored to a common centre and ground line,
-  and its effects crossed cell borders, so animations shook and the TALKING row
-  showed paws from the row above. The current sheet follows the anchor rules in
-  `docs/SPRITESHEET_GUIDE.md`; the animator cuts exact cells either way.
+- Frames should use a consistent character scale and paw baseline within each
+  state to avoid visible jumps during image changes.
 - The entire 336 × 252 window captures mouse input, including transparent
   pixels; per-pixel hit testing is not part of the MVP.
 - The Chat history is session-only; SQLite persistence is a later milestone.
@@ -108,8 +104,8 @@ Last updated: 2026-11-09
 3. The mascot's visual state is application state, owned by
    `MascotStateService`, not by animation callbacks — this prevents flicker when
    token streaming is added in milestone 4.
-4. Animations are played by moving an ImageView viewport over one loaded sheet,
-   which avoids per-frame image loading and keeps switching cheap.
+4. Mascot frame images are loaded once at startup and reused during playback;
+   state changes do not reload image resources.
 5. Background work is confined to the `ThreadManager` pool; UI updates will be
    marshalled with `Platform.runLater`.
 6. Long-running timers calculate the deadline once (`StudyTimer`) instead of
