@@ -3,8 +3,10 @@ package com.puppy.controller;
 import com.puppy.config.AppConfig;
 import com.puppy.config.ServiceRegistry;
 import com.puppy.enums.MascotState;
+import com.puppy.ui.MarkdownRenderer;
 import javafx.application.Platform;
 import javafx.event.Event;
+import javafx.event.EventType;
 import javafx.fxml.FXMLLoader;
 import javafx.geometry.Bounds;
 import javafx.scene.Node;
@@ -21,6 +23,7 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.text.TextFlow;
 import javafx.stage.Stage;
 import org.junit.jupiter.api.Test;
 
@@ -52,6 +55,18 @@ class FxmlLayoutTest {
                         "/fxml/settings.fxml")) {
                     new FXMLLoader(getClass().getResource(resource)).load();
                 }
+
+                VBox markdown = MarkdownRenderer.render("# Title\n\nHello **bold** and `code`.");
+                assertTrue(markdown.getChildren().get(0).getStyleClass().contains("md-heading"),
+                        "Markdown headings should render as heading blocks");
+                TextFlow paragraph = (TextFlow) markdown.getChildren().get(1);
+                assertTrue(paragraph.getChildren().stream()
+                                .anyMatch(node -> node.getStyleClass().contains("md-bold")),
+                        "Markdown bold text should carry the bold style");
+                assertTrue(paragraph.getChildren().stream()
+                                .anyMatch(node -> node.getStyleClass().contains("md-inline-code")),
+                        "Markdown inline code should render as a code node");
+
                 FXMLLoader shellLoader = new FXMLLoader(getClass().getResource("/fxml/shell.fxml"));
                 Parent shell = shellLoader.load();
                 controller = shellLoader.getController();
@@ -65,6 +80,14 @@ class FxmlLayoutTest {
                 stage.show();
 
                 StackPane mascotDock = (StackPane) shell.lookup(".mascot-dock");
+                services.mascotStateService().setState(MascotState.SLEEPING);
+                Event.fireEvent(mascotDock, hover(MouseEvent.MOUSE_ENTERED));
+                assertEquals(MascotState.SLEEPING, services.mascotStateService().getState(),
+                        "Hovering the mascot must not replace its current animation state");
+                Event.fireEvent(mascotDock, hover(MouseEvent.MOUSE_EXITED));
+                assertEquals(MascotState.SLEEPING, services.mascotStateService().getState(),
+                        "Leaving the mascot must not reset its current animation state");
+                services.mascotStateService().resetToIdle();
                 double initialX = stage.getX();
                 double initialY = stage.getY();
                 Event.fireEvent(mascotDock, primaryPress(10, 10));
@@ -146,6 +169,10 @@ class FxmlLayoutTest {
                 ((Button) shell.lookup("#sendButton")).fire();
                 assertEquals(messageCount, messages.getChildren().size(),
                         "Blank chat input must not add a message");
+                messageInput.setText("/model");
+                ((Button) shell.lookup("#sendButton")).fire();
+                assertEquals(messageCount + 2, messages.getChildren().size(),
+                        "/model should answer locally without contacting Ollama");
                 closeActivePanel(shell, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -182,6 +209,13 @@ class FxmlLayoutTest {
         assertTrue(loaded.await(15, TimeUnit.SECONDS), "JavaFX did not load the FXML layouts in time");
         assertNull(failure.get(), "An FXML layout could not be loaded");
         Platform.exit();
+    }
+
+    private static MouseEvent hover(EventType<MouseEvent> type) {
+        return new MouseEvent(type,
+                10, 10, 10, 10, MouseButton.NONE, 0,
+                false, false, false, false,
+                false, false, false, false, false, false, null);
     }
 
     private static MouseEvent doubleClick() {

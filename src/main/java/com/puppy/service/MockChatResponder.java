@@ -4,11 +4,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Stand-in for the AI until milestone 4: returns short canned replies so the
- * chat interface can be built and tested without a provider.
+ * Legacy stand-in for the AI, kept for its unit test and as a deterministic
+ * fallback example.
  *
- * <p>This class will be replaced by {@code ChatService} and the AI providers; it
- * exists so the controller does not contain response logic.</p>
+ * <p>The chat UI now uses {@code ChatService} and the local Ollama model; this
+ * class is no longer created by {@code ServiceRegistry}.</p>
  */
 public final class MockChatResponder {
 

@@ -6,6 +6,7 @@
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.VBox?>
@@ -17,18 +18,25 @@
         <ImageView fx:id="chatMascotView" fitWidth="28" fitHeight="28"
                    preserveRatio="true" smooth="false"/>
         <Label text="Chat" styleClass="panel-title"/>
-        <Label text="Session only" styleClass="status-pill"/>
         <Region HBox.hgrow="ALWAYS"/>
+        <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
         <Button text="History" onAction="#toggleHistory" styleClass="quiet-button"/>
         <Button text="New" onAction="#newConversation" styleClass="quiet-button"/>
+        <Button fx:id="expandButton" text="Expand" onAction="#toggleExpanded"
+                styleClass="quiet-button"/>
         <Button text="_" onAction="#onMinimize" styleClass="window-button"/>
         <Button text="X" onAction="#onClose" styleClass="window-button"/>
     </HBox>
     <HBox spacing="10" VBox.vgrow="ALWAYS" minHeight="0">
         <VBox fx:id="historyPane" styleClass="history-pane" spacing="6"
-              visible="false" managed="false" prefWidth="130" minWidth="120">
-            <Label text="This session" styleClass="section-title"/>
-            <VBox fx:id="historyItems" spacing="4"/>
+              visible="false" managed="false" prefWidth="190" minWidth="170">
+            <Label text="Sessions" styleClass="section-title"/>
+            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" styleClass="history-scroll"
+                        VBox.vgrow="ALWAYS">
+                <content>
+                    <VBox fx:id="historyItems" spacing="4"/>
+                </content>
+            </ScrollPane>
         </VBox>
         <BorderPane styleClass="chat-body" HBox.hgrow="ALWAYS" minWidth="0">
             <center>
@@ -45,12 +53,22 @@
                 </VBox>
             </center>
             <bottom>
-                <HBox styleClass="composer" spacing="8">
-                    <TextField fx:id="messageInput" promptText="Type a message..."
-                               onAction="#sendMessage" HBox.hgrow="ALWAYS"/>
-                    <Button text="Send" onAction="#sendMessage" fx:id="sendButton"
-                            styleClass="primary-button"/>
-                </HBox>
+                <VBox spacing="6">
+                    <FlowPane fx:id="attachmentBar" hgap="6" vgap="4"
+                              styleClass="attachment-bar"
+                              visible="false" managed="false"/>
+                    <Label fx:id="attachmentStatus" styleClass="muted-copy"
+                           wrapText="true" visible="false" managed="false"/>
+                    <HBox styleClass="composer" spacing="8">
+                        <Button fx:id="attachButton" text="Attach" onAction="#attachDocument"
+                                styleClass="quiet-button"/>
+                        <TextField fx:id="messageInput"
+                                   promptText="Ask anything, attach a PDF/DOCX, or type /model..."
+                                   onAction="#sendMessage" HBox.hgrow="ALWAYS"/>
+                        <Button text="Send" onAction="#sendMessage" fx:id="sendButton"
+                                styleClass="primary-button"/>
+                    </HBox>
+                </VBox>
             </bottom>
         </BorderPane>
     </HBox>

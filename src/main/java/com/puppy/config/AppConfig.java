@@ -15,11 +15,15 @@ public record AppConfig(
         String appName,
         String appVersion,
         boolean alwaysOnTop,
-        Path dataDirectory
+        Path dataDirectory,
+        String ollamaUrl,
+        String ollamaModel
 ) {
 
     public static final String APP_NAME = "Puppy AI";
     public static final String APP_VERSION = "1.0.0-SNAPSHOT";
+    public static final String DEFAULT_OLLAMA_URL = "http://localhost:11434";
+    public static final String DEFAULT_OLLAMA_MODEL = "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
 
     public AppConfig {
         if (appName == null || appName.isBlank()) {
@@ -31,6 +35,12 @@ public record AppConfig(
         if (dataDirectory == null) {
             throw new IllegalArgumentException("dataDirectory must not be null");
         }
+        if (ollamaUrl == null || ollamaUrl.isBlank()) {
+            throw new IllegalArgumentException("ollamaUrl must not be blank");
+        }
+        if (ollamaModel == null || ollamaModel.isBlank()) {
+            throw new IllegalArgumentException("ollamaModel must not be blank");
+        }
     }
 
     /** Loads the configuration from system properties, environment and defaults. */
@@ -39,7 +49,14 @@ public record AppConfig(
                 APP_NAME,
                 APP_VERSION,
                 readBoolean("alwaysOnTop", true),
-                defaultDataDirectory());
+                defaultDataDirectory(),
+                readOrDefault("ollama.url", DEFAULT_OLLAMA_URL),
+                readOrDefault("ollama.model", DEFAULT_OLLAMA_MODEL));
+    }
+
+    private static String readOrDefault(String key, String defaultValue) {
+        String value = read(key);
+        return value == null ? defaultValue : value;
     }
 
     private static Path defaultDataDirectory() {

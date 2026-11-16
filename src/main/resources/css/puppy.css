@@ -14,7 +14,7 @@
     -fx-effect: dropshadow(gaussian, rgba(58, 34, 20, 0.28), 12, 0.1, 0, 4);
 }
 
-.hover-hint {
+.mascot-bubble {
     -fx-background-color: #fff4e8;
     -fx-background-radius: 14;
     -fx-border-color: #e2c4ad;
@@ -24,6 +24,13 @@
     -fx-font-size: 13px;
     -fx-font-weight: bold;
     -fx-text-fill: #57351f;
+    -fx-effect: dropshadow(gaussian, rgba(58, 34, 20, 0.18), 10, 0.1, 0, 3);
+}
+
+.mascot-bubble.notification-bubble {
+    -fx-background-color: #eef7ee;
+    -fx-border-color: #b9d8bd;
+    -fx-text-fill: #376240;
 }
 
 .menu-host {
@@ -150,6 +157,13 @@
 .message-bubble {
     -fx-background-radius: 14;
     -fx-padding: 8 11;
+    -fx-font-family: "Segoe UI";
+    -fx-font-size: 13px;
+    -fx-text-fill: #4a2d1d;
+}
+
+.message-text {
+    -fx-font-family: "Segoe UI";
     -fx-font-size: 13px;
     -fx-text-fill: #4a2d1d;
 }
@@ -162,6 +176,160 @@
 
 .user-bubble {
     -fx-background-color: #f9d9bd;
+}
+
+/* Markdown ------------------------------------------------------------- */
+
+.md-body {
+    -fx-font-family: "Segoe UI";
+    -fx-font-size: 13px;
+}
+
+.md-text {
+    -fx-fill: #4a2d1d;
+}
+
+.md-heading {
+    -fx-fill: #502b17;
+    -fx-font-weight: bold;
+}
+
+.md-h1 {
+    -fx-font-size: 18px;
+}
+
+.md-h2 {
+    -fx-font-size: 16px;
+}
+
+.md-h3 {
+    -fx-font-size: 14px;
+}
+
+.md-bold {
+    -fx-font-weight: bold;
+}
+
+.md-italic {
+    -fx-font-style: italic;
+}
+
+.md-strike {
+    -fx-strikethrough: true;
+}
+
+.md-inline-code {
+    -fx-font-family: "Consolas";
+    -fx-font-size: 12px;
+    -fx-text-fill: #8b3d1f;
+    -fx-background-color: #f6e2d1;
+    -fx-background-radius: 5;
+    -fx-padding: 0 4;
+}
+
+.md-code-block {
+    -fx-font-family: "Consolas";
+    -fx-font-size: 12px;
+    -fx-text-fill: #f8e7cb;
+    -fx-background-color: #342318;
+    -fx-background-radius: 9;
+    -fx-padding: 9 11;
+}
+
+.md-list-item {
+    -fx-alignment: top-left;
+}
+
+.md-list-marker {
+    -fx-text-fill: #9c6032;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+}
+
+.md-quote {
+    -fx-border-color: #d3ac91;
+    -fx-border-width: 0 0 0 3;
+    -fx-padding: 2 0 2 10;
+}
+
+.md-quote-text {
+    -fx-fill: #6b4a34;
+    -fx-font-style: italic;
+}
+
+.md-link {
+    -fx-border-color: transparent;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-text-fill: #b45309;
+    -fx-underline: true;
+    -fx-cursor: hand;
+}
+
+.md-rule {
+    -fx-padding: 2 0;
+}
+
+.md-table {
+    -fx-border-color: #ead4c4;
+    -fx-border-width: 1;
+}
+
+.md-table-cell {
+    -fx-background-color: #fffaf5;
+    -fx-border-color: #ead4c4;
+    -fx-border-width: 0 1 1 0;
+    -fx-padding: 5 7;
+}
+
+.md-table-header {
+    -fx-background-color: #f7dfca;
+}
+
+.md-table-header .md-text {
+    -fx-font-weight: bold;
+}
+
+.message-attachment {
+    -fx-font-size: 10px;
+    -fx-text-fill: #8a7263;
+    -fx-padding: 0 6;
+}
+
+.attachment-bar {
+    -fx-padding: 0 2;
+}
+
+.attachment-chip {
+    -fx-background-color: #fff0e2;
+    -fx-background-radius: 10;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
+    -fx-padding: 3 5;
+    -fx-alignment: center-left;
+}
+
+.attachment-name {
+    -fx-font-size: 11px;
+    -fx-text-fill: #684832;
+}
+
+.attachment-remove {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-text-fill: #9c6032;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 3;
+    -fx-cursor: hand;
+}
+
+.attachment-remove:hover {
+    -fx-background-color: #f7dfca;
+}
+
+.error-copy {
+    -fx-text-fill: #b3452f;
 }
 
 .composer {
@@ -189,11 +357,31 @@
 
 .history-item {
     -fx-background-color: transparent;
+    -fx-background-radius: 8;
     -fx-alignment: center-left;
     -fx-max-width: Infinity;
     -fx-text-overrun: ellipsis;
     -fx-text-fill: #684832;
+    -fx-padding: 5 7;
     -fx-cursor: hand;
+}
+
+.history-item:hover {
+    -fx-background-color: #f7dfca;
+}
+
+.active-history-item,
+.active-history-item:hover {
+    -fx-background-color: #f38d38;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+}
+
+.history-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
 }
 
 .study-content {

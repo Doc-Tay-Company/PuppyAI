@@ -1,6 +1,6 @@
 # Puppy AI — Implementation Status
 
-Last updated: 2026-11-09
+Last updated: 2026-11-15
 
 ## Milestones
 
@@ -9,14 +9,14 @@ Last updated: 2026-11-09
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
 | 3 | Pure Java services and SQLite persistence | Planned — see `docs/MILESTONE_3_PLAN.md` |
-| 4 | AI integration (cloud + Ollama) | Pending |
+| 4 | AI integration (local Ollama chat + document attachments; cloud pending) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
 | 6 | Study mode, settings, integration | Pending |
 | 7 | Testing, optimization, packaging | Pending |
 
 ## Completed (milestone 1)
 
-- Maven project: JDK 24 target, JavaFX 25.0.5, JavaFX Maven Plugin, JUnit 5.14.4.
+- Maven project: JDK 25 target, JavaFX 25.0.5, JavaFX Maven Plugin, JUnit 5.14.4.
 - `PuppyApplication` entry point with frameless (`StageStyle.TRANSPARENT`),
   transparent, always-on-top window positioned in the bottom-right screen corner.
 - Draggable mascot with clean shutdown through `Application.stop()`.
@@ -55,19 +55,89 @@ Last updated: 2026-11-09
 - `FxmlLayoutTest` loads all layouts and verifies the drag-safe menu, Study /
   Chat / Settings navigation, panel collapse, and blank-chat rejection.
 
+## Completed (local AI chat and document attachments)
+
+- `OllamaClient` — streams `POST /api/chat` as newline-delimited JSON, with
+  `think: false` for Qwen3.5, a 16,384-token context, friendly errors for a
+  stopped server, a missing model, timeouts and interrupted replies.
+- `ChatService` + `ChatPromptBuilder` — one system prompt with Puppy's rules,
+  optional document context and the ten most recent turns. Document text is
+  capped at 20,000 characters and history at 8,000 characters.
+- `DocumentTextExtractor` — PDF via PDFBox (with `--- Page N ---` markers),
+  DOCX/DOC via Apache POI, plus TXT/Markdown. Files are limited to 20 MB and
+  80,000 extracted characters; scanned PDFs and encrypted files get a clear
+  message instead of a stack trace.
+- `ChatController` — streams tokens into the chat bubble, batches UI updates,
+  cancels generation when the conversation changes or the panel closes, and
+  keeps up to five document attachments for the current conversation. Attachment
+  chips can be removed, and switching back to an archived conversation restores
+  its attachments.
+- `SettingsController` — shows the configured Ollama model and server alongside
+  the always-on-top switch.
+- Presentation is unchanged: the mascot still follows THINKING → TALKING →
+  HAPPY → IDLE while a reply is generated.
+- Tests: `OllamaClientTest` (streaming, errors, availability),
+  `DocumentTextExtractorTest` (PDF, DOCX, text, limits),
+  `ChatPromptBuilderTest` and `ChatServiceTest`.
+
+## Completed (mascot and chat polish)
+
+- **Navigation:** Chat, Study, Settings and submenus now have a Menu / Back to
+  menu action. Panel close and minimize still collapse to the desktop mascot.
+- **Hover and click:** the old hover bubble is gone. The mascot uses a hand
+  cursor on hover and shows a random message from `MascotMessages` on click;
+  single clicks wait briefly so double-click still opens the menu.
+- **Sleep:** after five minutes without app activity (and with no open panel,
+  menu or running study timer) the mascot enters `SLEEPING`; clicking it wakes
+  the mascot, shows a wake line and restarts the inactivity timer.
+- **Notifications:** while the mascot is idle and compact, a quiet random
+  notification appears every two minutes and auto-hides after eight seconds.
+- **Chat size:** the chat panel opens at a monitor-aware 940 × 720 maximum,
+  stays anchored bottom-right and has an Expand / Restore toggle for the full
+  visual workspace.
+- **Markdown:** `MarkdownRenderer` renders headings, emphasis, strikethrough,
+  inline/fenced code, lists, quotes, links, tables and rules as JavaFX nodes.
+  Streaming text is plain for speed; the completed message is re-rendered as
+  Markdown.
+- **Sessions:** the history sidebar is scrollable and highlights the active
+  session. Streaming tokens update a single label on an 80 ms UI ticker; the
+  session snapshot is updated when a message completes or the user switches
+  conversations, avoiding a full history copy per token.
+- **Commands:** `/model` reports the exact local model and Ollama server;
+  `/help` lists commands. The new-chat greeting no longer names the model.
+- **Tests:** `MascotMessagesTest`, Markdown rendering and `/model` assertions in
+  `FxmlLayoutTest`, and the updated greeting contract in `ChatServiceTest`.
+
 ## Services used by the UI
 
 | Class | How the UI should use it |
 | --- | --- |
+| `ChatService` | `ChatController` gets it from `ServiceRegistry`, streams replies with `reply(...)`, and reads attachments with `readDocument(...)`. |
+| `DocumentTextExtractor` | Used through `ChatService.readDocument(...)`; never called from the JavaFX thread. |
+| `OllamaClient` | Infrastructure owned by `ChatService`; controllers never construct it. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
-| `MockChatResponder` | `ChatController` gets the responder from `ServiceRegistry`, rejects blank input, and runs its demo delay on the shared worker pool. |
-| `AIMode` | Reserved for AI integration; its settings control is visibly unavailable until provider routing exists. |
+| `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
+| `MockChatResponder` | Legacy stand-in retained for its unit test; it is no longer connected to the UI. |
+| `AIMode` | Reserved for the future cloud routing/settings work. |
 
 ## Current implementation notes
 
-- **JDK:** the plan targets Java 25; this machine has JDK 24, and JavaFX 25 needs
-  JDK 23+, so `pom.xml` sets `java.version` to 24. Bump the property after
-  installing JDK 25.
+- **JDK:** `pom.xml` targets Java 25, matching the Java 25 LTS runtime and
+  JavaFX 25.0.5.
+- **Local AI:** `AppConfig` reads `puppy.ollama.url` / `PUPPY_OLLAMA_URL`
+  (default `http://localhost:11434`) and `puppy.ollama.model` /
+  `PUPPY_OLLAMA_MODEL` (default `hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M`).
+  `OllamaClient` sends `think: false` because the chat UI shows the answer
+  rather than Qwen's private reasoning.
+- **Prompt:** Qwen's chat template requires a single system message at the
+  start, so Puppy's rules and the optional document context are merged into one
+  system message. `ChatPromptBuilder` keeps at most ten turns, 8,000 characters
+  of history and 20,000 characters of document text; the model runs with a
+  16,384-token context window.
+- **Attachments:** only extracted text is kept in memory and sent to the local
+  model. Up to five files can be attached per conversation; the attachment bar
+  restores when an archived conversation is selected. Removing a chip removes
+  its context from later prompts.
 - **Sprites:** the sheet is a 6 × 6 grid (row per state, 6 frames per row,
   768 × 768 with 128 × 128 px cells today). Frame size is derived at runtime, so
   new art with the same grid shape requires no code change.
@@ -87,10 +157,18 @@ Last updated: 2026-11-09
   `docs/SPRITESHEET_GUIDE.md`; the animator cuts exact cells either way.
 - The entire 336 × 252 window captures mouse input, including transparent
   pixels; per-pixel hit testing is not part of the MVP.
-- The Chat history is session-only; SQLite persistence is a later milestone.
+- Chat history and attachments are session-only; SQLite persistence is a later
+  milestone.
+- Scanned/image-only PDFs have no selectable text and are rejected. Password-
+  protected files and files above 20 MB are also rejected.
+- Very long documents are truncated to fit the model context, so the answer may
+  miss details near the end of a large file.
+- Only local Ollama chat is wired up; cloud AI, Tavily research and automatic
+  routing are still pending.
 - True hide-to-tray is deferred until a reliable restore path is implemented.
-- No database, AI provider or Tavily integration yet, so no network access is
-  required to run the application.
+- PDFBox/POI print a one-time "Log4j API could not find a logging provider"
+  warning in the console because the project does not bundle a logging backend;
+  it does not affect chat or extraction.
 
 ## Follow-on UI ideas
 
@@ -106,14 +184,23 @@ Last updated: 2026-11-09
 2. Controllers receive services from `ServiceRegistry`; they never construct
    infrastructure themselves.
 3. The mascot's visual state is application state, owned by
-   `MascotStateService`, not by animation callbacks — this prevents flicker when
-   token streaming is added in milestone 4.
+   `MascotStateService`, not by animation callbacks — this prevents flicker
+   while tokens stream.
 4. Animations are played by moving an ImageView viewport over one loaded sheet,
    which avoids per-frame image loading and keeps switching cheap.
-5. Background work is confined to the `ThreadManager` pool; UI updates will be
-   marshalled with `Platform.runLater`.
+5. Background work is confined to the `ThreadManager` pool; UI updates are
+   marshalled with `Platform.runLater`. Streamed tokens are batched so a fast
+   model cannot flood the JavaFX Application Thread.
 6. Long-running timers calculate the deadline once (`StudyTimer`) instead of
    decrementing a counter, so UI stalls or a slow tick cannot make them drift.
-7. The chat UI gets its stand-in replies from `MockChatResponder` through
-   `ServiceRegistry`, keeping controllers free of response logic until the real
-   `ChatService` replaces it.
+7. `ChatController` calls `ChatService`; it never talks to Ollama, PDFBox or
+   Apache POI directly.
+8. The local model is accessed over Ollama's HTTP API. No Python service or
+   separate backend is introduced.
+9. Document context and chat history are bounded before every request so a large
+   attachment cannot overflow Qwen's context window or block the UI.
+10. Qwen's chat template accepts only one starting system message, so the
+    document context is appended to Puppy's system prompt instead of being sent
+    as a second system message.
+11. Only extracted document text is held in memory. Original files stay where
+    the user chose them, and nothing is uploaded to a cloud service.

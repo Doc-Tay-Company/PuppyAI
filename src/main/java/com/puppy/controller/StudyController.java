@@ -40,6 +40,7 @@ public class StudyController {
     private MascotStateService mascotStateService;
     private Runnable closeAction;
     private Runnable minimizeAction;
+    private Runnable menuAction;
 
     @FXML
     public void initialize() {
@@ -58,10 +59,11 @@ public class StudyController {
     }
 
     public void attach(MascotStateService mascotStateService,
-                       Runnable closeAction, Runnable minimizeAction) {
+                       Runnable closeAction, Runnable minimizeAction, Runnable menuAction) {
         this.mascotStateService = Objects.requireNonNull(mascotStateService, "mascotStateService");
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
         this.minimizeAction = Objects.requireNonNull(minimizeAction, "minimizeAction");
+        this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
         ticker.play();
         updateTimer();
     }
@@ -123,6 +125,11 @@ public class StudyController {
     @FXML
     private void onMinimize() {
         minimizeAction.run();
+    }
+
+    @FXML
+    private void onMainMenu() {
+        menuAction.run();
     }
 
     public void close() {

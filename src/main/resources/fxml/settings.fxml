@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.scene.control.CheckBox?>
-<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
@@ -14,6 +13,7 @@
     <HBox styleClass="panel-header" alignment="CENTER_LEFT" spacing="8">
         <Label text="Settings" styleClass="panel-title"/>
         <Region HBox.hgrow="ALWAYS"/>
+        <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
         <Button text="_" onAction="#onMinimize" styleClass="window-button"/>
         <Button text="X" onAction="#onClose" styleClass="window-button"/>
     </HBox>
@@ -26,14 +26,12 @@
     </VBox>
     <VBox styleClass="settings-section" spacing="6">
         <HBox alignment="CENTER_LEFT" spacing="8">
-            <Label text="AI mode" styleClass="section-title"/>
-            <Label text="Coming soon" styleClass="status-pill"/>
+            <Label text="Local AI" styleClass="section-title"/>
+            <Label text="Ollama" styleClass="status-pill"/>
         </HBox>
-        <ComboBox fx:id="aiModeCombo" disable="true" promptText="Available after AI integration"
-                  maxWidth="Infinity"/>
-        <Label text="Online and local providers will be configured in a later milestone. "
-               styleClass="muted-copy" wrapText="true"/>
-        <Label text="Provider credentials are not requested or saved by this UI."
+        <Label fx:id="localModelLabel" text="Model" styleClass="muted-copy" wrapText="true"/>
+        <Label fx:id="ollamaUrlLabel" text="Server" styleClass="muted-copy" wrapText="true"/>
+        <Label text="Chat and document reading run on this machine through Ollama. Cloud AI modes are not configured yet."
                styleClass="muted-copy" wrapText="true"/>
     </VBox>
     <VBox styleClass="settings-section" spacing="6">

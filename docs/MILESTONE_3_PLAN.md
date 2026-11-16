@@ -277,7 +277,7 @@ directory):
 
 | Risk | Mitigation |
 | --- | --- |
-| `sqlite-jdbc` loads native code; Java 24 prints a restricted-method warning | Add `--enable-native-access=ALL-UNNAMED` to the `javafx-maven-plugin` options (alongside `javafx.graphics`) and confirm the driver opens a DB on this machine |
+| `sqlite-jdbc` loads native code; Java 25 prints a restricted-method warning | Add `--enable-native-access=ALL-UNNAMED` to the `javafx-maven-plugin` options (alongside `javafx.graphics`) and confirm the driver opens a DB on this machine |
 | Tests write into the real user profile | `puppy.dataDirectory` override, used by every test and by `FxmlLayoutTest` |
 | Two app instances / the currently running app holding the file | WAL + `busy_timeout=5000`; stop the running instance before the first manual migration |
 | Chat refactor regresses the existing UI flow | Keep `FxmlLayoutTest` assertions (blank input, history open, panel collapse) and add persistence assertions rather than replacing them |

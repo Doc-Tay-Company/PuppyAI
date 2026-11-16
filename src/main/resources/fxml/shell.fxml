@@ -24,7 +24,8 @@
         <ImageView fx:id="mascotView" styleClass="mascot-view"
                    fitWidth="286" fitHeight="190" preserveRatio="true" smooth="false"
                    StackPane.alignment="CENTER"/>
-        <Label fx:id="hoverHint" text="Hello!" styleClass="hover-hint"
-               visible="false" managed="false" StackPane.alignment="TOP_CENTER"/>
+        <Label fx:id="mascotBubble" text="" styleClass="mascot-bubble"
+               wrapText="true" maxWidth="286" visible="false" managed="false"
+               StackPane.alignment="TOP_CENTER"/>
     </StackPane>
 </VBox>

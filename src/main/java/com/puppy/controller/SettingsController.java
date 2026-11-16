@@ -1,9 +1,7 @@
 package com.puppy.controller;
 
-import com.puppy.enums.AIMode;
 import javafx.fxml.FXML;
 import javafx.scene.control.CheckBox;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 
 import java.util.Objects;
@@ -16,7 +14,10 @@ public class SettingsController {
     private CheckBox alwaysOnTopCheck;
 
     @FXML
-    private ComboBox<AIMode> aiModeCombo;
+    private Label localModelLabel;
+
+    @FXML
+    private Label ollamaUrlLabel;
 
     @FXML
     private Label versionLabel;
@@ -24,19 +25,19 @@ public class SettingsController {
     private Consumer<Boolean> alwaysOnTopChanged;
     private Runnable closeAction;
     private Runnable minimizeAction;
+    private Runnable menuAction;
 
-    @FXML
-    public void initialize() {
-        aiModeCombo.getItems().setAll(AIMode.values());
-    }
-
-    public void attach(String appVersion, boolean alwaysOnTop,
+    public void attach(String appVersion, String localModel, String ollamaUrl,
+                       boolean alwaysOnTop,
                        Consumer<Boolean> alwaysOnTopChanged,
-                       Runnable closeAction, Runnable minimizeAction) {
+                       Runnable closeAction, Runnable minimizeAction, Runnable menuAction) {
         this.alwaysOnTopChanged = Objects.requireNonNull(alwaysOnTopChanged, "alwaysOnTopChanged");
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
         this.minimizeAction = Objects.requireNonNull(minimizeAction, "minimizeAction");
+        this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
         alwaysOnTopCheck.setSelected(alwaysOnTop);
+        localModelLabel.setText("Model: " + localModel);
+        ollamaUrlLabel.setText("Server: " + ollamaUrl);
         versionLabel.setText("Version " + appVersion);
     }
 
@@ -53,5 +54,10 @@ public class SettingsController {
     @FXML
     private void onMinimize() {
         minimizeAction.run();
+    }
+
+    @FXML
+    private void onMainMenu() {
+        menuAction.run();
     }
 }

@@ -15,12 +15,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <!--
-            The plan targets Java 25. This machine has JDK 24 installed (JavaFX 25 requires
-            JDK 23+), so the project is built with Java 24. Install JDK 25, then change
-            java.version to 25 to move to the plan's target without any other edits.
-        -->
-        <java.version>24</java.version>
+        <java.version>25</java.version>
         <javafx.version>25.0.5</javafx.version>
         <junit.version>5.14.4</junit.version>
         <main.class>com.puppy.PuppyApplication</main.class>
@@ -37,6 +32,30 @@
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
+        </dependency>
+
+        <!-- Local AI: Ollama chat API and JSON streaming -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.19.2</version>
+        </dependency>
+
+        <!-- Document attachments: PDF and Word text extraction -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
+            <version>5.4.1</version>
         </dependency>
 
         <!-- Testing -->

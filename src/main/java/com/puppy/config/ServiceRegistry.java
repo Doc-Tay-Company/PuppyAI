@@ -1,8 +1,10 @@
 package com.puppy.config;
 
+import com.puppy.ai.OllamaClient;
+import com.puppy.document.DocumentTextExtractor;
+import com.puppy.service.ChatService;
 import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.MascotStateService;
-import com.puppy.service.MockChatResponder;
 import com.puppy.util.ThreadManager;
 
 import java.util.Objects;
@@ -20,7 +22,7 @@ public final class ServiceRegistry implements AutoCloseable {
     private final AppConfig config;
     private final ThreadManager threadManager;
     private final MascotStateService mascotStateService;
-    private final MockChatResponder mockChatResponder;
+    private final ChatService chatService;
 
     private boolean started;
     private boolean closed;
@@ -29,7 +31,8 @@ public final class ServiceRegistry implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.threadManager = new ThreadManager(config.appName());
         this.mascotStateService = new DefaultMascotStateService();
-        this.mockChatResponder = new MockChatResponder();
+        OllamaClient ollamaClient = new OllamaClient(config.ollamaUrl(), config.ollamaModel());
+        this.chatService = new ChatService(ollamaClient, new DocumentTextExtractor());
     }
 
     /** Initializes the services that need explicit startup. Safe to call once. */
@@ -38,7 +41,7 @@ public final class ServiceRegistry implements AutoCloseable {
             return;
         }
         started = true;
-        // Later milestones: database connection, repositories, AI providers.
+        // Later milestones: database connection, repositories, cloud AI providers.
     }
 
     public boolean isStarted() {
@@ -54,11 +57,11 @@ public final class ServiceRegistry implements AutoCloseable {
     }
 
     /**
-     * Placeholder replies for the chat UI until milestone 4 adds the real
-     * {@code ChatService} and AI providers.
+     * Local chat through Ollama, including document attachment extraction.
+     * AI providers for online modes will be registered here later.
      */
-    public MockChatResponder mockChatResponder() {
-        return mockChatResponder;
+    public ChatService chatService() {
+        return chatService;
     }
 
     public ThreadManager threadManager() {
