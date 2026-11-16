@@ -34,6 +34,7 @@
 }
 
 .menu-host {
+    -fx-background-color: transparent;
     -fx-padding: 2 4 10 4;
 }
 
@@ -388,10 +389,12 @@
     -fx-padding: 0 2 2 2;
 }
 
-.study-panel {
-    -fx-background-color: #d1d5db;
+.panel-card.study-panel {
+    -fx-background-color: transparent;
     -fx-background-radius: 20;
     -fx-padding: 12;
+    -fx-effect: none;
+    -fx-border-color: transparent;
 }
 
 .study-header {

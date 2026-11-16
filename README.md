@@ -6,12 +6,13 @@ services in a single desktop process — no Python, no separate server.
 
 **Status: local AI chat is wired up.** The app launches as a frameless,
 transparent, always-on-top puppy. Click the puppy for a random message,
-double-click to open Study / Chat / More, and the shell expands around the
-mascot while keeping its screen anchor. After five idle minutes the puppy falls
-asleep; click it to wake it up. Chat streams Markdown replies from the local
-model through **Ollama**, supports `/model` and `/help`, and can read attached
-PDF, Word and text files into the conversation. Chat history and attachments are
-session-only; cloud AI and persistence are future work.
+double-click to open the menu. Study and Chat open in separate windows without
+moving the mascot: Study appears at the primary screen's top-right and Chat in
+the screen center. The mascot stays at the bottom-right. After five idle minutes
+the puppy falls asleep; click it to wake it up. Chat streams Markdown replies
+from the local model through **Ollama**, supports `/model` and `/help`, and can
+read attached PDF, Word and text files into the conversation. Chat history and
+attachments are session-only; cloud AI and persistence are future work.
 
 ## Requirements
 
@@ -77,13 +78,14 @@ mvn javafx:run        # launch Puppy
 | Double-click the puppy | Open or close the Study / Chat / More menu |
 | Idle for five minutes | Puppy falls asleep; click it to wake it up |
 | Every two minutes | Puppy may show a quiet notification while idle |
-| Study / Chat | Open the matching panel above the puppy; Menu returns to the main menu |
+| Study | Open a separate window at the top-right of the primary screen |
+| Chat | Open a separate window centered on the primary screen |
 | Menu (inside a panel) | Go back to the Study / Chat / More menu |
-| Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
+| Expand / Restore (Chat) | Expand or restore the chat window without moving the mascot |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
 | `/model` | Show the exact local model and Ollama server in the chat |
 | More | Open Settings, session chat history, Help / About, collapse, or quit |
-| Escape | Close the current panel/menu and return to the puppy |
+| Escape | Close the current panel/menu; the mascot stays in place |
 | Right-click | Development menu: switch mascot states or quit |
 | Quit Puppy | Closes the window and shuts services down cleanly |
 
@@ -137,7 +139,7 @@ Infrastructure        Ollama HTTP client, document extraction, configuration,
 | `PuppyApplication` | JavaFX entry point, builds the transparent always-on-top stage |
 | `ServiceRegistry` | Creates and shuts down application services |
 | `AppConfig` | App name, version, always-on-top flag, data directory, Ollama URL and model |
-| `MascotController` | Expandable shell, mascot interactions, sleep/notification timers, panel navigation and drag-safe movement |
+| `MascotController` | Fixed mascot window, separate menu/panel windows, mascot interactions and timers |
 | `MascotAnimator` | Frame timing and per-state image switching |
 | `MascotSprites` | Ordered frame resources and per-state animation metadata |
 | `MascotMessages` | Random click, wake and notification lines |
@@ -197,12 +199,12 @@ Planned packages from the implementation plan (`repository/`, `database/`,
 
 ## Local chat and document attachments
 
-The app follows the mascot → menu → Chat / Study / More flow. The expandable
-shell caches the Chat, Study and Settings panels; closing or minimizing a panel
-returns to the mascot.
+The app follows the mascot → menu → Chat / Study / More flow. The mascot stays
+in its fixed bottom-right window while menus and feature panels use separate
+windows. Chat, Study and Settings views are cached between openings.
 
-- **Chat** opens in a roomy, monitor-aware panel with an Expand / Restore
-  toggle. Replies stream from the local Ollama model on the shared worker pool;
+- **Chat** opens centered on the primary screen in a roomy window with an
+  Expand / Restore toggle. Replies stream from the local Ollama model on the shared worker pool;
   tokens are batched onto an 80 ms UI ticker so a fast model cannot flood the
   JavaFX Application Thread. Blank input is rejected unless a document is
   attached. Assistant replies are rendered as Markdown (headings, emphasis,

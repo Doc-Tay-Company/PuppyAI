@@ -9,6 +9,7 @@ import javafx.event.Event;
 import javafx.event.EventType;
 import javafx.fxml.FXMLLoader;
 import javafx.geometry.Bounds;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
@@ -23,8 +24,11 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.scene.text.TextFlow;
 import javafx.stage.Stage;
+import javafx.stage.Screen;
+import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -74,6 +78,7 @@ class FxmlLayoutTest {
                 stage.getScene().getStylesheets().add(
                         getClass().getResource("/css/puppy.css").toExternalForm());
                 stage.setResizable(false);
+                stage.setAlwaysOnTop(true);
                 controller.attach(stage, services);
                 stage.setX(300);
                 stage.setY(300);
@@ -96,56 +101,83 @@ class FxmlLayoutTest {
                                 && Math.abs(stage.getY() - initialY - 15) < 1,
                         "Dragging the mascot should move the window");
                 Event.fireEvent(mascotDock, doubleClick());
-                assertFalse(shell.lookup(".menu-host").isVisible(),
+                assertFalse(isShowingStage(".main-menu"),
                         "Dragging must not trigger the double-click menu");
 
-                double expectedRight = stage.getX() + stage.getWidth();
-                double expectedBottom = stage.getY() + stage.getHeight();
+                double mascotX = stage.getX();
+                double mascotY = stage.getY();
+                double mascotWidth = stage.getWidth();
+                double mascotHeight = stage.getHeight();
                 Event.fireEvent(mascotDock, primaryPress(30, 30));
                 Event.fireEvent(mascotDock, doubleClick());
-                assertTrue(shell.lookup(".menu-host").isVisible(),
+                Stage menuStage = findShowingStage(".main-menu");
+                assertTrue(menuStage.isShowing(),
                         "Double-click should open the main menu");
+                assertEquals(Color.TRANSPARENT, menuStage.getScene().getFill(),
+                        "The menu window background should be transparent");
+                StackPane menuRoot = (StackPane) menuStage.getScene().getRoot();
+                menuRoot.applyCss();
+                assertTrue(menuRoot.getBackground() == null
+                                || menuRoot.getBackground().getFills().stream()
+                                .allMatch(fill -> Color.TRANSPARENT.equals(fill.getFill())),
+                        "The area around the menu should be transparent");
+                HBox menu = (HBox) menuStage.getScene().lookup(".main-menu");
+                menu.applyCss();
+                assertTrue(menu.getBackground() != null && menu.getBackground().getFills().stream()
+                                .anyMatch(fill -> !Color.TRANSPARENT.equals(fill.getFill())),
+                        "The menu itself should keep its visible surface");
                 Event.fireEvent(shell, new KeyEvent(KeyEvent.KEY_PRESSED, "", "",
                         KeyCode.ESCAPE, false, false, false, false));
-                assertFalse(shell.lookup(".menu-host").isVisible(),
+                assertFalse(menuStage.isShowing(),
                         "Escape should dismiss the menu");
                 Event.fireEvent(mascotDock, doubleClick());
-                double anchoredRight = stage.getX() + stage.getWidth();
-                double anchoredBottom = stage.getY() + stage.getHeight();
-                assertTrue(stage.getWidth() > 336, "The menu should expand the shell");
-                double menuWidth = stage.getWidth();
-                double menuHeight = stage.getHeight();
-                assertTrue(Math.abs(anchoredRight - expectedRight) < 1,
-                        "The expanded shell should preserve its right edge");
-                assertTrue(Math.abs(anchoredBottom - expectedBottom) < 1,
-                        "The expanded shell should preserve its bottom edge");
-                HBox menu = (HBox) shell.lookup(".main-menu");
+                menuStage = findShowingStage(".main-menu");
+                menu = (HBox) menuStage.getScene().lookup(".main-menu");
 
                 ((Button) menu.getChildren().get(0)).fire();
-                assertTrue(shell.lookup(".panel-host").isVisible(),
-                        "Study should open in the panel host");
-                assertEquals(menuWidth, stage.getWidth(),
-                        "Study should use the same shell width as the menu");
-                assertTrue(stage.getHeight() > menuHeight,
-                        "Study should leave room for the mascot below the panel");
+                Stage studyStage = findShowingStage(".study-header");
+                assertEquals(mascotX, stage.getX(), 1,
+                        "Opening Study must not change the mascot's screen X position");
+                assertEquals(mascotY, stage.getY(), 1,
+                        "Opening Study must not change the mascot's screen Y position");
+                assertEquals(mascotWidth, stage.getWidth(), 1,
+                        "Opening Study must not resize the mascot window");
+                assertEquals(mascotHeight, stage.getHeight(), 1,
+                        "Opening Study must not resize the mascot window");
+                Rectangle2D screen = Screen.getPrimary().getVisualBounds();
+                assertEquals(screen.getMaxX() - studyStage.getWidth() - 48, studyStage.getX(), 1,
+                        "Study should be placed at the primary screen's top-right");
+                assertEquals(screen.getMinY() + 48, studyStage.getY(), 1,
+                        "Study should be placed at the top of the primary screen");
+                assertTrue(studyStage.getHeight() >= 340 && studyStage.getHeight() < 470,
+                        "Study should fit its content without stretching to the old shell height");
+                assertEquals(Color.TRANSPARENT, studyStage.getScene().getFill(),
+                        "The Study window background should be transparent");
+                studyStage.getScene().getRoot().applyCss();
+                VBox studyRoot = (VBox) studyStage.getScene().getRoot();
+                studyRoot.layout();
+                assertTrue(studyRoot.getBackground() == null
+                                || studyRoot.getBackground().getFills().stream()
+                                .allMatch(fill -> Color.TRANSPARENT.equals(fill.getFill())),
+                        "The Study panel surface should be transparent");
+                Node studyContent = studyStage.getScene().lookup(".study-content");
+                Bounds studyContentBounds = studyContent.localToScene(studyContent.getBoundsInLocal());
+                assertTrue(studyContentBounds.getMaxY() <= studyStage.getScene().getHeight() + 1,
+                        "Study content should fit inside the visible window without bottom clipping");
+                assertTrue(stage.isAlwaysOnTop(), "The mascot should remain above panel windows");
+                assertFalse(studyStage.isAlwaysOnTop(), "Study should not be always-on-top of the mascot");
+                assertNull(studyStage.getOwner(), "Study should be positioned independently of the mascot stage");
                 assertEquals("Study Mode",
-                        ((Label) shell.lookup(".study-header .panel-title")).getText(),
+                        ((Label) studyStage.getScene().lookup(".study-header .panel-title")).getText(),
                         "The Study panel title should identify Study Mode");
-                assertNull(shell.lookup(".study-footer"),
+                assertNull(studyStage.getScene().lookup(".study-footer"),
                         "The separate Study footer should be removed");
-                Button studyToggle = (Button) shell.lookup("#startPauseButton");
-                assertTrue(stage.getScene().getWidth() > 340,
-                        "The scene should grow with the panel window");
-                Node panelNode = shell.lookup(".panel-host");
+                Button studyToggle = (Button) studyStage.getScene().lookup("#startPauseButton");
+                Node panelNode = studyStage.getScene().getRoot();
                 Bounds panelBounds = panelNode.localToScene(panelNode.getBoundsInLocal());
                 Bounds toggleBounds = studyToggle.localToScene(studyToggle.getBoundsInLocal());
                 assertTrue(panelBounds.contains(toggleBounds),
                         "The timer button must stay inside the visible panel to be clickable");
-                assertTrue(mascotDock.isVisible(),
-                        "The mascot should stay visible while a panel is open");
-                Bounds dockBounds = mascotDock.localToScene(mascotDock.getBoundsInLocal());
-                assertFalse(panelBounds.intersects(dockBounds),
-                        "The panel must not cover the mascot");
                 studyToggle.fire();
                 assertTrue("Pause".equals(studyToggle.getText()),
                         "Starting a session should switch the button to Pause");
@@ -154,46 +186,84 @@ class FxmlLayoutTest {
                 studyToggle.fire();
                 assertTrue("Resume".equals(studyToggle.getText()),
                         "Pausing a session should offer Resume");
-                closeActivePanel(shell, 0);
+                closeActivePanel(studyStage, 0);
 
                 Event.fireEvent(mascotDock, doubleClick());
-                ((Button) menu.getChildren().get(1)).fire();
-                assertTrue(shell.lookup(".panel-host").isVisible(),
-                        "Chat should open in the panel host");
-                shell.applyCss();
-                shell.layout();
-                VBox messages = (VBox) shell.lookup("#messagesBox");
-                TextField messageInput = (TextField) shell.lookup("#messageInput");
+                menuStage = findShowingStage(".main-menu");
+                ((Button) ((HBox) menuStage.getScene().lookup(".main-menu")).getChildren().get(1)).fire();
+                Stage chatStage = findShowingStage(".chat-body");
+                assertEquals(Color.TRANSPARENT, chatStage.getScene().getFill(),
+                        "The area outside the Chat panel should be transparent");
+                chatStage.getScene().getRoot().applyCss();
+                VBox chatRoot = (VBox) chatStage.getScene().getRoot();
+                assertTrue(chatRoot.getBackground() != null
+                                && chatRoot.getBackground().getFills().stream()
+                                .anyMatch(fill -> !Color.TRANSPARENT.equals(fill.getFill())),
+                        "Chat should retain its original panel background");
+                assertEquals(mascotX, stage.getX(), 1,
+                        "Opening Chat must not change the mascot's screen X position");
+                assertEquals(mascotY, stage.getY(), 1,
+                        "Opening Chat must not change the mascot's screen Y position");
+                assertEquals(screen.getMinX() + (screen.getWidth() - chatStage.getWidth()) / 2,
+                        chatStage.getX(), 1, "Chat should be horizontally centered on the primary screen");
+                assertEquals(screen.getMinY() + (screen.getHeight() - chatStage.getHeight()) / 2,
+                        chatStage.getY(), 1, "Chat should be vertically centered on the primary screen");
+                Button expandChat = (Button) chatStage.getScene().lookup("#expandButton");
+                expandChat.fire();
+                assertEquals("Restore", expandChat.getText());
+                assertEquals(mascotX, stage.getX(), 1,
+                        "Expanding Chat must not move the mascot horizontally");
+                assertEquals(mascotY, stage.getY(), 1,
+                        "Expanding Chat must not move the mascot vertically");
+                assertEquals(screen.getWidth() - 96, chatStage.getWidth(), 1,
+                        "Expanded Chat should fill the primary screen with margins");
+                expandChat.fire();
+                assertEquals("Expand", expandChat.getText());
+                assertEquals(mascotWidth, stage.getWidth(), 1,
+                        "Resizing Chat must not resize the mascot window");
+                VBox messages = (VBox) chatStage.getScene().lookup("#messagesBox");
+                TextField messageInput = (TextField) chatStage.getScene().lookup("#messageInput");
                 int messageCount = messages.getChildren().size();
                 messageInput.setText("   ");
-                ((Button) shell.lookup("#sendButton")).fire();
+                ((Button) chatStage.getScene().lookup("#sendButton")).fire();
                 assertEquals(messageCount, messages.getChildren().size(),
                         "Blank chat input must not add a message");
                 messageInput.setText("/model");
-                ((Button) shell.lookup("#sendButton")).fire();
+                ((Button) chatStage.getScene().lookup("#sendButton")).fire();
                 assertEquals(messageCount + 2, messages.getChildren().size(),
                         "/model should answer locally without contacting Ollama");
-                closeActivePanel(shell, 1);
+                closeActivePanel(chatStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
-                ((Button) menu.getChildren().get(2)).fire();
-                VBox moreMenu = (VBox) ((StackPane) shell.lookup(".menu-host")).getChildren().get(0);
+                menuStage = findShowingStage(".main-menu");
+                ((Button) ((HBox) menuStage.getScene().lookup(".main-menu")).getChildren().get(2)).fire();
+                menuStage = findShowingStage(".more-menu");
+                VBox moreMenu = (VBox) menuStage.getScene().lookup(".more-menu");
+                moreMenu.applyCss();
+                assertTrue(moreMenu.getBackground() != null
+                                && moreMenu.getBackground().getFills().stream()
+                                .anyMatch(fill -> !Color.TRANSPARENT.equals(fill.getFill())),
+                        "The More menu card should remain visible on the transparent window");
                 ((Button) moreMenu.getChildren().get(1)).fire();
-                assertTrue(shell.lookup(".panel-host").isVisible(),
-                        "Settings should open from More");
-                CheckBox alwaysOnTop = (CheckBox) shell.lookup("#alwaysOnTopCheck");
+                Stage settingsStage = findShowingStage("#alwaysOnTopCheck");
+                CheckBox alwaysOnTop = (CheckBox) settingsStage.getScene().lookup("#alwaysOnTopCheck");
                 alwaysOnTop.fire();
-                assertTrue(stage.isAlwaysOnTop(),
-                        "The in-session always-on-top setting should update the stage");
-                closeActivePanel(shell, 1);
+                assertFalse(stage.isAlwaysOnTop(),
+                        "The in-session always-on-top setting should update the mascot stage");
+                assertFalse(settingsStage.isAlwaysOnTop(),
+                        "Panel stages should stay behind the mascot when always-on-top is disabled");
+                closeActivePanel(settingsStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
-                ((Button) menu.getChildren().get(2)).fire();
-                moreMenu = (VBox) ((StackPane) shell.lookup(".menu-host")).getChildren().get(0);
+                menuStage = findShowingStage(".main-menu");
+                ((Button) ((HBox) menuStage.getScene().lookup(".main-menu")).getChildren().get(2)).fire();
+                menuStage = findShowingStage(".more-menu");
+                moreMenu = (VBox) menuStage.getScene().lookup(".more-menu");
                 ((Button) moreMenu.getChildren().get(2)).fire();
-                assertTrue(shell.lookup("#historyPane").isVisible(),
+                chatStage = findShowingStage("#historyPane");
+                assertTrue(chatStage.getScene().lookup("#historyPane").isVisible(),
                         "More should open session chat history");
-                closeActivePanel(shell, 1);
+                closeActivePanel(chatStage, 1);
             } catch (Throwable throwable) {
                 failure.set(throwable);
             } finally {
@@ -239,14 +309,31 @@ class FxmlLayoutTest {
                 true, false, false, false, false, false, null);
     }
 
-    private static void closeActivePanel(Parent shell, int buttonIndex) {
-        StackPane panelHost = (StackPane) shell.lookup(".panel-host");
-        Parent panel = (Parent) panelHost.getChildren().get(0);
-        List<Button> windowButtons = panel.lookupAll(".window-button").stream()
+    private static Stage findShowingStage(String selector) {
+        return Window.getWindows().stream()
+                .filter(Stage.class::isInstance)
+                .map(Stage.class::cast)
+                .filter(Window::isShowing)
+                .filter(window -> window.getScene() != null
+                        && window.getScene().lookup(selector) != null)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No showing stage contains " + selector));
+    }
+
+    private static boolean isShowingStage(String selector) {
+        return Window.getWindows().stream()
+                .filter(Stage.class::isInstance)
+                .map(Stage.class::cast)
+                .anyMatch(window -> window.isShowing() && window.getScene() != null
+                        && window.getScene().lookup(selector) != null);
+    }
+
+    private static void closeActivePanel(Stage panelStage, int buttonIndex) {
+        List<Button> windowButtons = panelStage.getScene().getRoot().lookupAll(".window-button").stream()
                 .filter(Button.class::isInstance)
                 .map(Button.class::cast)
                 .toList();
         windowButtons.get(buttonIndex).fire();
-        assertFalse(panelHost.isVisible(), "Closing a panel should return to the mascot");
+        assertFalse(panelStage.isShowing(), "Closing a panel should return to the mascot");
     }
 }

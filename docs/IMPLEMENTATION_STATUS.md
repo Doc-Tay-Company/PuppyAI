@@ -42,10 +42,11 @@ Last updated: 2026-11-15
 - `AIMode` enum (`ONLINE`, `OFFLINE`, `AUTO`) backing the future settings panel.
 - Tests: `StudyTimerTest` (11 cases, fake clock) and `MockChatResponderTest`.
 
-- Expandable JavaFX shell with hover greeting, happy hover reaction,
-  drag-safe double-click menu and anchored resize behavior.
-- Cached Chat, Study and Settings panels plus More menu, Escape dismissal,
-  collapse/minimize behavior and a right-click development fallback.
+- Fixed bottom-right mascot window with separate menu and feature-panel windows.
+  Study opens top-right and Chat opens centered on the primary screen; opening
+  or resizing panels does not move the mascot.
+- Cached Chat, Study and Settings views plus More menu, Escape dismissal,
+  close/minimize behavior and a right-click development fallback.
 - Chat uses mock replies on the shared worker pool, rejects blank input and
   offers new conversations with session-only history.
 - Study UI drives the existing 25/5 timer with start/pause/reset, phase labels
@@ -92,9 +93,8 @@ Last updated: 2026-11-15
   the mascot, shows a wake line and restarts the inactivity timer.
 - **Notifications:** while the mascot is idle and compact, a quiet random
   notification appears every two minutes and auto-hides after eight seconds.
-- **Chat size:** the chat panel opens at a monitor-aware 940 × 720 maximum,
-  stays anchored bottom-right and has an Expand / Restore toggle for the full
-  visual workspace.
+- **Chat size:** the chat window opens centered at up to 940 × 720 and has an
+  Expand / Restore toggle for the primary screen's visual workspace.
 - **Markdown:** `MarkdownRenderer` renders headings, emphasis, strikethrough,
   inline/fenced code, lists, quotes, links, tables and rules as JavaFX nodes.
   Streaming text is plain for speed; the completed message is re-rendered as

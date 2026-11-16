@@ -28,8 +28,10 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 import javafx.util.Duration;
 
 import java.io.IOException;
@@ -48,14 +50,14 @@ public class MascotController {
     private static final double COMPACT_HEIGHT = 252;
     private static final double MENU_WIDTH = 380;
     private static final double MENU_HEIGHT = 360;
+    private static final double MENU_BAR_HEIGHT = 76;
     private static final double STUDY_WIDTH = 380;
     private static final double STUDY_HEIGHT = 470;
+    private static final double STUDY_MIN_HEIGHT = 340;
     private static final double SETTINGS_WIDTH = 620;
     private static final double SETTINGS_HEIGHT = 660;
     private static final double CHAT_PREFERRED_WIDTH = 940;
     private static final double CHAT_PREFERRED_HEIGHT = 720;
-    private static final double CHAT_MINIMUM_WIDTH = 640;
-    private static final double CHAT_MINIMUM_HEIGHT = 560;
     private static final double SCREEN_EDGE_MARGIN = 48;
     private static final double DRAG_THRESHOLD = 5;
     private static final Duration SLEEP_AFTER = Duration.minutes(5);
@@ -64,10 +66,7 @@ public class MascotController {
     private static final Duration SINGLE_CLICK_DELAY = Duration.millis(230);
 
     @FXML
-    private VBox shellRoot;
-
-    @FXML
-    private StackPane panelHost;
+    private StackPane shellRoot;
 
     @FXML
     private StackPane menuHost;
@@ -85,12 +84,14 @@ public class MascotController {
     private Label mascotBubble;
 
     private final Map<Panel, Parent> cachedPanels = new EnumMap<>(Panel.class);
+    private final Map<Panel, Stage> panelStages = new EnumMap<>(Panel.class);
     private final Random random = new Random();
     private MascotStateService mascotStateService;
     private Consumer<MascotState> stateListener;
     private MascotAnimator animator;
     private ContextMenu contextMenu;
     private Stage stage;
+    private Stage menuStage;
     private ServiceRegistry services;
     private double pressScreenX;
     private double pressScreenY;
@@ -100,6 +101,7 @@ public class MascotController {
     private double chatHeight = CHAT_PREFERRED_HEIGHT;
     private boolean draggedSincePress;
     private boolean chatExpanded;
+    private boolean closed;
     private long ignoreClicksUntil;
     private Panel activePanel;
     private ChatController chatController;
@@ -156,6 +158,23 @@ public class MascotController {
         animator.play(mascotStateService.getState());
         stage.setWidth(COMPACT_WIDTH);
         stage.setHeight(COMPACT_HEIGHT);
+        shellRoot.getChildren().remove(menuHost);
+        menuStage = createAuxiliaryStage(menuHost, "Menu", true);
+        menuStage.focusedProperty().addListener((observable, wasFocused, focused) -> {
+            if (!closed && wasFocused && !focused) {
+                Platform.runLater(() -> {
+                    if (!closed && menuStage.isShowing() && !menuStage.isFocused()) {
+                        closeMenu();
+                    }
+                });
+            }
+        });
+        menuStage.getScene().setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                closeMenu();
+                event.consume();
+            }
+        });
         stage.getScene().setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 if (activePanel != null) {
@@ -194,13 +213,8 @@ public class MascotController {
             return;
         }
         activePanel = null;
-        panelHost.getChildren().clear();
-        panelHost.setVisible(false);
-        panelHost.setManaged(false);
         menuHost.getChildren().setAll(createMoreMenu());
-        menuHost.setManaged(true);
-        menuHost.setVisible(true);
-        resizeShell(MENU_WIDTH, MENU_HEIGHT);
+        showMenu(MENU_WIDTH, MENU_HEIGHT);
     }
 
     private void openPanel(Panel panel) {
@@ -209,19 +223,14 @@ public class MascotController {
         closeMenu();
         try {
             Parent view = cachedPanels.computeIfAbsent(panel, this::loadPanel);
-            panelHost.getChildren().setAll(view);
-            panelHost.setManaged(true);
-            panelHost.setVisible(true);
-            activePanel = panel;
-            // Panel windows must fit the panel above the mascot dock, not just the panel.
-            switch (panel) {
-                case STUDY -> resizeShell(STUDY_WIDTH, STUDY_HEIGHT);
-                case SETTINGS -> resizeShell(SETTINGS_WIDTH, SETTINGS_HEIGHT);
-                case CHAT -> {
-                    updateChatSize();
-                    resizeShell(chatWidth, chatHeight);
-                }
+            if (activePanel != null && activePanel != panel) {
+                hidePanelStage(activePanel);
             }
+            activePanel = panel;
+            Stage panelStage = panelStages.computeIfAbsent(panel, ignored -> createPanelStage(panel, view));
+            positionPanelStage(panel, panelStage, false);
+            panelStage.show();
+            panelStage.toFront();
         } catch (PanelLoadException e) {
             throw new IllegalStateException("Could not open " + panel.name().toLowerCase() + " panel", e.getCause());
         }
@@ -274,7 +283,7 @@ public class MascotController {
                 services.chatService().describeLocalModel(),
                 services.chatService().baseUrl(),
                 stage.isAlwaysOnTop(),
-                stage::setAlwaysOnTop, this::closePanel, this::collapseToMascot,
+                this::setAlwaysOnTop, this::closePanel, this::collapseToMascot,
                 this::returnToMainMenu);
         return view;
     }
@@ -306,28 +315,24 @@ public class MascotController {
 
     private void showAbout() {
         VBox about = new VBox(10);
-        about.getStyleClass().addAll("panel-card", "more-menu");
+        about.getStyleClass().add("more-menu");
         about.setAlignment(Pos.CENTER);
         about.getChildren().add(new Label("Puppy AI"));
         about.getChildren().add(new Label("A little desktop companion for chat and focused study."));
         about.getChildren().add(new Label("Chat runs locally through Ollama. Web research arrives later."));
         about.getChildren().add(menuItem("Back to menu", this::showMainMenu));
         menuHost.getChildren().setAll(about);
-        resizeShell(MENU_WIDTH, MENU_HEIGHT);
+        showMenu(MENU_WIDTH, MENU_HEIGHT);
     }
 
     private void showMainMenu() {
         noteActivity();
         hideBubble();
         resetChatExpansion();
-        menuHost.getChildren().setAll(mainMenu);
-        menuHost.setVisible(true);
-        menuHost.setManaged(true);
-        panelHost.getChildren().clear();
-        panelHost.setVisible(false);
-        panelHost.setManaged(false);
+        hideActivePanelStage();
         activePanel = null;
-        resizeShell(MENU_WIDTH, MENU_HEIGHT);
+        menuHost.getChildren().setAll(mainMenu);
+        showMenu(MENU_WIDTH, MENU_BAR_HEIGHT);
     }
 
     private void closePanel() {
@@ -338,43 +343,119 @@ public class MascotController {
         noteActivity();
         hideBubble();
         resetChatExpansion();
+        hideActivePanelStage();
         activePanel = null;
-        panelHost.getChildren().clear();
-        panelHost.setVisible(false);
-        panelHost.setManaged(false);
-        menuHost.getChildren().setAll(mainMenu);
-        menuHost.setVisible(false);
-        menuHost.setManaged(false);
-        resizeShell(COMPACT_WIDTH, COMPACT_HEIGHT);
+        closeMenu();
         restoreMascotState();
     }
 
     private void closeMenu() {
         noteActivity();
         hideBubble();
-        menuHost.getChildren().setAll(mainMenu);
         menuHost.setVisible(false);
         menuHost.setManaged(false);
-        resizeShell(COMPACT_WIDTH, COMPACT_HEIGHT);
+        if (menuStage != null) {
+            menuStage.hide();
+        }
     }
 
-    private void resizeShell(double width, double height) {
-        Rectangle2D bounds = currentScreenBounds();
-        double anchorRight = stage.getX() + stage.getWidth();
-        double anchorBottom = stage.getY() + stage.getHeight();
-        shellRoot.setPrefSize(width, height);
-        // A non-resizable stage sizes itself back to its scene, so allow resizing
-        // for the duration of the programmatic change.
-        boolean resizable = stage.isResizable();
-        stage.setResizable(true);
-        stage.setWidth(width);
-        stage.setHeight(height);
-        stage.setResizable(resizable);
+    private void showMenu(double width, double height) {
+        Rectangle2D bounds = primaryScreenBounds();
+        width = Math.min(width, Math.max(1, bounds.getWidth() - SCREEN_EDGE_MARGIN * 2));
+        height = Math.min(height, Math.max(1, bounds.getHeight() - SCREEN_EDGE_MARGIN * 2));
+        menuHost.setPrefSize(width, height);
+        menuHost.setManaged(true);
+        menuHost.setVisible(true);
+        menuStage.setWidth(width);
+        menuStage.setHeight(height);
+        double x = stage.getX() + stage.getWidth() - width;
+        double y = stage.getY() - height - 8;
+        menuStage.setX(clamp(x, bounds.getMinX(), Math.max(bounds.getMinX(), bounds.getMaxX() - width)));
+        menuStage.setY(clamp(y, bounds.getMinY(), Math.max(bounds.getMinY(), bounds.getMaxY() - height)));
+        menuStage.show();
+        menuStage.toFront();
+    }
 
-        double x = anchorRight - stage.getWidth();
-        double y = anchorBottom - stage.getHeight();
-        stage.setX(clamp(x, bounds.getMinX(), bounds.getMaxX() - stage.getWidth()));
-        stage.setY(clamp(y, bounds.getMinY(), bounds.getMaxY() - stage.getHeight()));
+    private Stage createAuxiliaryStage(Parent content, String title, boolean owned) {
+        Stage auxiliary = new Stage(StageStyle.TRANSPARENT);
+        if (owned) {
+            auxiliary.initOwner(stage);
+        }
+        auxiliary.setTitle(services.config().appName() + " - " + title);
+        auxiliary.setAlwaysOnTop(owned && stage.isAlwaysOnTop());
+        auxiliary.setResizable(false);
+        Scene scene = new Scene(content);
+        scene.setFill(Color.TRANSPARENT);
+        scene.getStylesheets().addAll(stage.getScene().getStylesheets());
+        auxiliary.setScene(scene);
+        return auxiliary;
+    }
+
+    private Stage createPanelStage(Panel panel, Parent content) {
+        Stage panelStage = createAuxiliaryStage(content, panel.name(), false);
+        panelStage.setOnCloseRequest(event -> {
+            if (!closed) {
+                event.consume();
+                hidePanel(panel);
+            }
+        });
+        panelStage.getScene().setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                hidePanel(panel);
+                event.consume();
+            }
+        });
+        return panelStage;
+    }
+
+    private void positionPanelStage(Panel panel, Stage panelStage, boolean expanded) {
+        Rectangle2D bounds = primaryScreenBounds();
+        double availableWidth = Math.max(1, bounds.getWidth() - SCREEN_EDGE_MARGIN * 2);
+        double availableHeight = Math.max(1, bounds.getHeight() - SCREEN_EDGE_MARGIN * 2);
+        double preferredWidth;
+        double preferredHeight;
+        switch (panel) {
+            case STUDY -> {
+                preferredWidth = STUDY_WIDTH;
+                Parent root = panelStage.getScene().getRoot();
+                root.applyCss();
+                double contentHeight = root.prefHeight(preferredWidth);
+                preferredHeight = Double.isFinite(contentHeight) && contentHeight > 0
+                        ? Math.min(STUDY_HEIGHT, Math.max(STUDY_MIN_HEIGHT, contentHeight + 24))
+                        : STUDY_MIN_HEIGHT;
+            }
+            case SETTINGS -> {
+                preferredWidth = SETTINGS_WIDTH;
+                preferredHeight = SETTINGS_HEIGHT;
+            }
+            case CHAT -> {
+                if (expanded) {
+                    preferredWidth = availableWidth;
+                    preferredHeight = availableHeight;
+                } else {
+                    updateChatSize();
+                    preferredWidth = chatWidth;
+                    preferredHeight = chatHeight;
+                }
+            }
+            default -> throw new IllegalStateException("Unsupported panel: " + panel);
+        }
+
+        double width = Math.min(preferredWidth, availableWidth);
+        double height = Math.min(preferredHeight, availableHeight);
+        panelStage.setWidth(width);
+        panelStage.setHeight(height);
+
+        double x = switch (panel) {
+            case STUDY -> bounds.getMaxX() - width - SCREEN_EDGE_MARGIN;
+            case CHAT, SETTINGS -> bounds.getMinX() + (bounds.getWidth() - width) / 2;
+        };
+        double y = switch (panel) {
+            case STUDY -> bounds.getMinY() + SCREEN_EDGE_MARGIN;
+            case CHAT, SETTINGS -> bounds.getMinY() + (bounds.getHeight() - height) / 2;
+        };
+        panelStage.setX(clamp(x, bounds.getMinX(), Math.max(bounds.getMinX(), bounds.getMaxX() - width)));
+        panelStage.setY(clamp(y, bounds.getMinY(), Math.max(bounds.getMinY(), bounds.getMaxY() - height)));
     }
 
     /**
@@ -382,13 +463,11 @@ public class MascotController {
      * mascot visible below the panel.
      */
     private void updateChatSize() {
-        Rectangle2D bounds = currentScreenBounds();
-        chatWidth = clamp(
-                bounds.getWidth() - (SCREEN_EDGE_MARGIN * 2),
-                CHAT_MINIMUM_WIDTH, CHAT_PREFERRED_WIDTH);
-        chatHeight = clamp(
-                bounds.getHeight() - (SCREEN_EDGE_MARGIN * 2),
-                CHAT_MINIMUM_HEIGHT, CHAT_PREFERRED_HEIGHT);
+        Rectangle2D bounds = primaryScreenBounds();
+        chatWidth = Math.min(CHAT_PREFERRED_WIDTH,
+                Math.max(1, bounds.getWidth() - SCREEN_EDGE_MARGIN * 2));
+        chatHeight = Math.min(CHAT_PREFERRED_HEIGHT,
+                Math.max(1, bounds.getHeight() - SCREEN_EDGE_MARGIN * 2));
     }
 
     /**
@@ -402,15 +481,39 @@ public class MascotController {
         }
         noteActivity();
         chatExpanded = !chatExpanded;
-        if (chatExpanded) {
-            Rectangle2D bounds = currentScreenBounds();
-            resizeShell(
-                    Math.max(chatWidth, bounds.getWidth() - SCREEN_EDGE_MARGIN),
-                    Math.max(chatHeight, bounds.getHeight() - SCREEN_EDGE_MARGIN));
-        } else {
-            resizeShell(chatWidth, chatHeight);
-        }
+        positionPanelStage(Panel.CHAT, panelStages.get(Panel.CHAT), chatExpanded);
         return chatExpanded;
+    }
+
+    private void hidePanel(Panel panel) {
+        hidePanelStage(panel);
+        if (activePanel == panel) {
+            activePanel = null;
+        }
+        if (panel == Panel.CHAT) {
+            resetChatExpansion();
+        }
+        restoreMascotState();
+    }
+
+    private void hideActivePanelStage() {
+        if (activePanel != null) {
+            hidePanelStage(activePanel);
+        }
+    }
+
+    private void hidePanelStage(Panel panel) {
+        Stage panelStage = panelStages.get(panel);
+        if (panelStage != null) {
+            panelStage.hide();
+        }
+    }
+
+    private void setAlwaysOnTop(boolean alwaysOnTop) {
+        stage.setAlwaysOnTop(alwaysOnTop);
+        if (menuStage != null) {
+            menuStage.setAlwaysOnTop(alwaysOnTop);
+        }
     }
 
     private void resetChatExpansion() {
@@ -420,13 +523,8 @@ public class MascotController {
         }
     }
 
-    private Rectangle2D currentScreenBounds() {
-        return Screen.getScreensForRectangle(
-                        stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight())
-                .stream()
-                .findFirst()
-                .orElse(Screen.getPrimary())
-                .getVisualBounds();
+    private Rectangle2D primaryScreenBounds() {
+        return Screen.getPrimary().getVisualBounds();
     }
 
     private static double clamp(double value, double minimum, double maximum) {
@@ -515,7 +613,7 @@ public class MascotController {
     }
 
     private void noteActivity() {
-        if (sleepTimer == null || mascotStateService == null) {
+        if (closed || sleepTimer == null || mascotStateService == null) {
             return;
         }
         if (mascotStateService.getState() == MascotState.SLEEPING) {
@@ -645,6 +743,10 @@ public class MascotController {
 
     /** Stops UI timers and releases the mascot state listener during shutdown. */
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         if (studyController != null) {
             studyController.close();
         }
@@ -672,6 +774,10 @@ public class MascotController {
         if (animator != null) {
             animator.stop();
         }
+        if (menuStage != null) {
+            menuStage.close();
+        }
+        panelStages.values().forEach(Stage::close);
     }
 
     private enum Panel {
