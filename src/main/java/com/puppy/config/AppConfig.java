@@ -2,6 +2,7 @@ package com.puppy.config;
 
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Optional;
 
 /**
  * Application-level configuration.
@@ -31,6 +32,17 @@ public record AppConfig(
         if (dataDirectory == null) {
             throw new IllegalArgumentException("dataDirectory must not be null");
         }
+    }
+
+    /**
+     * The always-on-top value configured outside the database, when one was given.
+     *
+     * <p>Used by {@code SettingsService} so an explicit system property or
+     * environment variable outranks a stored setting.</p>
+     */
+    public Optional<Boolean> alwaysOnTopOverride() {
+        String value = read("alwaysOnTop");
+        return value == null ? Optional.empty() : Optional.of(Boolean.parseBoolean(value));
     }
 
     /** Loads the configuration from system properties, environment and defaults. */

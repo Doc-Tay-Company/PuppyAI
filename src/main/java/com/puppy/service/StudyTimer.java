@@ -81,6 +81,16 @@ public final class StudyTimer {
         return remainingNanos() <= 0;
     }
 
+    /** Full length of the current phase, in seconds. */
+    public int getPhaseSeconds() {
+        return phase == Phase.FOCUS ? focusSeconds : breakSeconds;
+    }
+
+    /** Seconds elapsed in the current phase; frozen while paused. */
+    public int getElapsedSeconds() {
+        return getPhaseSeconds() - getRemainingSeconds();
+    }
+
     /** Starts or resumes the current phase. Does nothing once that phase has ended. */
     public void start() {
         if (running || isFinished()) {

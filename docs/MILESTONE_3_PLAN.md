@@ -4,8 +4,9 @@ Source of truth: `PuppyAI_ImplementationPlan.md`, *Day 3 — Pure Java backend s
 persistence* (milestone 3). This document turns that milestone into an ordered,
 verifiable work list for the code that exists today.
 
-Status: **planned, not started.** Milestones 1 and 2 are complete; the UI runs on
-in-memory state.
+Status: **in progress — steps 1–4 done** (models, `Database`/`Schema`, driver
+dependency, repositories and the chat/settings/study services with tests). Milestones
+1 and 2 are complete; the UI still runs on in-memory state until step 5.
 
 ## Goal
 
