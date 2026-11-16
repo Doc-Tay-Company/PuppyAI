@@ -9,7 +9,7 @@
 
 <VBox xmlns="http://javafx.com/javafx/24" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.puppy.controller.StudyController"
-      styleClass="panel-card study-panel" spacing="8" minWidth="0" minHeight="0">
+      styleClass="panel-card, study-panel" spacing="8" minWidth="0" minHeight="0">
     <HBox styleClass="study-header" alignment="CENTER_LEFT" spacing="4">
         <Label text="Study Mode" styleClass="panel-title"/>
         <Region HBox.hgrow="ALWAYS"/>

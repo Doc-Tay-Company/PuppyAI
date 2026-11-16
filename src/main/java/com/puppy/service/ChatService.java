@@ -43,7 +43,8 @@ public final class ChatService {
 
     public String greeting() {
         return "Hi! I'm Puppy, your desktop companion. Ask me anything, attach a PDF or Word "
-                + "document, or type /model to see which local model is running.";
+                + "document, or type /focus with your timetable and /model to see which local "
+                + "model is running.";
     }
 
     public String modelName() {

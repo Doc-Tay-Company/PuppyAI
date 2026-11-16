@@ -49,7 +49,11 @@ public class MascotController {
     private static final double MENU_WIDTH = 380;
     private static final double MENU_HEIGHT = 360;
     private static final double STUDY_WIDTH = 380;
-    private static final double STUDY_HEIGHT = 470;
+    private static final double STUDY_HEIGHT = 520;
+    private static final double FOCUS_PREFERRED_WIDTH = 980;
+    private static final double FOCUS_PREFERRED_HEIGHT = 840;
+    private static final double FOCUS_MINIMUM_WIDTH = 780;
+    private static final double FOCUS_MINIMUM_HEIGHT = 620;
     private static final double SETTINGS_WIDTH = 620;
     private static final double SETTINGS_HEIGHT = 660;
     private static final double CHAT_PREFERRED_WIDTH = 940;
@@ -98,12 +102,15 @@ public class MascotController {
     private double pressStageY;
     private double chatWidth = CHAT_PREFERRED_WIDTH;
     private double chatHeight = CHAT_PREFERRED_HEIGHT;
+    private double focusWidth = FOCUS_PREFERRED_WIDTH;
+    private double focusHeight = FOCUS_PREFERRED_HEIGHT;
     private boolean draggedSincePress;
     private boolean chatExpanded;
     private long ignoreClicksUntil;
     private Panel activePanel;
     private ChatController chatController;
     private StudyController studyController;
+    private FocusController focusController;
     private SettingsController settingsController;
     private PauseTransition singleClickDelay;
     private PauseTransition sleepTimer;
@@ -180,6 +187,11 @@ public class MascotController {
     }
 
     @FXML
+    private void openFocus() {
+        openPanel(Panel.FOCUS);
+    }
+
+    @FXML
     private void openChat() {
         openPanel(Panel.CHAT);
     }
@@ -216,6 +228,10 @@ public class MascotController {
             // Panel windows must fit the panel above the mascot dock, not just the panel.
             switch (panel) {
                 case STUDY -> resizeShell(STUDY_WIDTH, STUDY_HEIGHT);
+                case FOCUS -> {
+                    updateFocusSize();
+                    resizeShell(focusWidth, focusHeight);
+                }
                 case SETTINGS -> resizeShell(SETTINGS_WIDTH, SETTINGS_HEIGHT);
                 case CHAT -> {
                     updateChatSize();
@@ -227,7 +243,7 @@ public class MascotController {
         }
     }
 
-    /** Reopens the main Study / Chat / More menu from any panel. */
+    /** Reopens the main Study / Focus / Chat / More menu from any panel. */
     public void returnToMainMenu() {
         noteActivity();
         hideBubble();
@@ -240,6 +256,7 @@ public class MascotController {
             return switch (panel) {
                 case CHAT -> loadChatPanel();
                 case STUDY -> loadStudyPanel();
+                case FOCUS -> loadFocusPanel();
                 case SETTINGS -> loadSettingsPanel();
             };
         } catch (IOException e) {
@@ -252,8 +269,26 @@ public class MascotController {
         Parent view = loader.load();
         chatController = loader.getController();
         chatController.attach(services.chatService(), services.threadManager().executor(),
-                mascotStateService, this::closePanel, this::collapseToMascot,
-                this::returnToMainMenu, this::toggleChatExpansion);
+                mascotStateService, services.focusService(), this::closePanel, this::collapseToMascot,
+                this::returnToMainMenu, this::toggleChatExpansion, this::openFocusPanel);
+        return view;
+    }
+
+    /** Opens Focus after /focus built a plan in the chat panel. */
+    private void openFocusPanel() {
+        openPanel(Panel.FOCUS);
+        if (focusController != null) {
+            focusController.refresh();
+        }
+    }
+
+    private Parent loadFocusPanel() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/focus.fxml"));
+        Parent view = loader.load();
+        focusController = loader.getController();
+        focusController.attach(services.focusService(), mascotStateService,
+                services.threadManager().executor(), this::closePanel, this::collapseToMascot,
+                this::returnToMainMenu);
         return view;
     }
 
@@ -284,6 +319,7 @@ public class MascotController {
         card.getStyleClass().add("more-menu");
         card.setAlignment(Pos.CENTER);
         card.getChildren().add(new Label("More"));
+        card.getChildren().add(menuItem("Focus planner", () -> openPanel(Panel.FOCUS)));
         card.getChildren().add(menuItem("Settings", () -> openPanel(Panel.SETTINGS)));
         card.getChildren().add(menuItem("Chat history", () -> {
             openPanel(Panel.CHAT);
@@ -389,6 +425,17 @@ public class MascotController {
         chatHeight = clamp(
                 bounds.getHeight() - (SCREEN_EDGE_MARGIN * 2),
                 CHAT_MINIMUM_HEIGHT, CHAT_PREFERRED_HEIGHT);
+    }
+
+    /** Keeps the taller Focus panel inside the current monitor's visual bounds. */
+    private void updateFocusSize() {
+        Rectangle2D bounds = currentScreenBounds();
+        focusWidth = clamp(
+                bounds.getWidth() - (SCREEN_EDGE_MARGIN * 2),
+                FOCUS_MINIMUM_WIDTH, FOCUS_PREFERRED_WIDTH);
+        focusHeight = clamp(
+                bounds.getHeight() - (SCREEN_EDGE_MARGIN * 2),
+                FOCUS_MINIMUM_HEIGHT, FOCUS_PREFERRED_HEIGHT);
     }
 
     /**
@@ -527,6 +574,7 @@ public class MascotController {
     private void enterSleepIfEligible() {
         if (activePanel != null || menuHost.isVisible()
                 || (studyController != null && studyController.isTimerRunning())
+                || (focusController != null && focusController.isTimerRunning())
                 || isBusyAnimation()) {
             sleepTimer.playFromStart();
             return;
@@ -577,6 +625,8 @@ public class MascotController {
 
     private void restoreMascotState() {
         if (studyController != null && studyController.isTimerRunning()) {
+            mascotStateService.setState(MascotState.STUDYING);
+        } else if (focusController != null && focusController.isTimerRunning()) {
             mascotStateService.setState(MascotState.STUDYING);
         } else {
             mascotStateService.resetToIdle();
@@ -648,6 +698,9 @@ public class MascotController {
         if (studyController != null) {
             studyController.close();
         }
+        if (focusController != null) {
+            focusController.close();
+        }
         if (chatController != null) {
             chatController.close();
         }
@@ -677,6 +730,7 @@ public class MascotController {
     private enum Panel {
         CHAT,
         STUDY,
+        FOCUS,
         SETTINGS
     }
 

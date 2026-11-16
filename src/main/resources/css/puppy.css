@@ -66,7 +66,8 @@
 }
 
 .panel-host {
-    -fx-padding: 0 0 10 0;
+    /* Leave room for the panel's drop shadow above the mascot dock. */
+    -fx-padding: 0 0 12 0;
 }
 
 .panel-card {
@@ -436,6 +437,165 @@
     -fx-border-radius: 18;
     -fx-border-width: 1.5;
     -fx-padding: 10;
+}
+
+/* Focus planner --------------------------------------------------------- */
+
+.focus-panel {
+    -fx-background-color: #d5dbe2;
+    -fx-background-radius: 20;
+    -fx-padding: 12;
+}
+
+.focus-sidebar {
+    -fx-background-color: #fff0e2;
+    -fx-background-radius: 14;
+    -fx-padding: 10;
+}
+
+.focus-tabs {
+    -fx-background-color: transparent;
+    -fx-tab-min-height: 26;
+    -fx-tab-max-height: 26;
+}
+
+.focus-tabs .tab-header-area {
+    -fx-padding: 0 0 4 0;
+}
+
+.focus-tabs .tab-header-background {
+    -fx-background-color: transparent;
+}
+
+.focus-tabs .tab {
+    -fx-background-color: #f7dfca;
+    -fx-background-radius: 8 8 0 0;
+    -fx-padding: 4 9;
+}
+
+.focus-tabs .tab:selected {
+    -fx-background-color: #f38d38;
+}
+
+.focus-tabs .tab .tab-label {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #684832;
+}
+
+.focus-tabs .tab:selected .tab-label {
+    -fx-text-fill: white;
+}
+
+.focus-tabs .tab-content-area {
+    -fx-background-color: transparent;
+    -fx-padding: 4 0 0 0;
+}
+
+.focus-tab-content {
+    -fx-padding: 4 2 2 2;
+}
+
+.focus-list-scroll,
+.focus-sessions-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.focus-list-item {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 8;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 8;
+    -fx-padding: 4 6;
+}
+
+.focus-list-text {
+    -fx-font-size: 11px;
+    -fx-text-fill: #57351f;
+}
+
+.focus-timer-card {
+    -fx-background-color: #fdf3e7;
+    -fx-background-radius: 16;
+    -fx-padding: 12;
+}
+
+.focus-timer-text {
+    -fx-font-size: 32px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #502b17;
+    -fx-font-family: "Consolas";
+}
+
+.focus-day-header {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #8a5a3a;
+    -fx-padding: 4 2 0 2;
+}
+
+.focus-session {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 12;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 12;
+    -fx-padding: 7 9;
+}
+
+.focus-session:hover {
+    -fx-background-color: #fff2e6;
+}
+
+.focus-session-active {
+    -fx-background-color: #fff0e2;
+    -fx-border-color: #f38d38;
+    -fx-border-width: 1.5;
+}
+
+.focus-session-completed {
+    -fx-opacity: 0.62;
+}
+
+.focus-session-time {
+    -fx-font-family: "Consolas";
+    -fx-font-size: 11px;
+    -fx-text-fill: #8a5a3a;
+}
+
+.focus-session-subject {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #4a2d1d;
+}
+
+.focus-badge {
+    -fx-background-radius: 8;
+    -fx-padding: 1 7;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+}
+
+.focus-type-quick {
+    -fx-background-color: #e6effa;
+    -fx-text-fill: #3d628d;
+}
+
+.focus-type-deep {
+    -fx-background-color: #f1e6f8;
+    -fx-text-fill: #6b3f88;
+}
+
+.focus-completed-badge {
+    -fx-background-color: #e5f2e9;
+    -fx-text-fill: #3e765e;
+}
+
+.focus-warning {
+    -fx-font-size: 11px;
+    -fx-text-fill: #b3452f;
 }
 
 /* Right-click menu remains available as a development fallback. */

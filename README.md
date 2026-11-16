@@ -4,14 +4,17 @@ A desktop AI companion: a pixel-art puppy that lives on your desktop, chats with
 you, researches the web and runs study sessions. JavaFX frontend with pure Java
 services in a single desktop process — no Python, no separate server.
 
-**Status: local AI chat is wired up.** The app launches as a frameless,
-transparent, always-on-top puppy. Click the puppy for a random message,
-double-click to open Study / Chat / More, and the shell expands around the
-mascot while keeping its screen anchor. After five idle minutes the puppy falls
-asleep; click it to wake it up. Chat streams Markdown replies from the local
-model through **Ollama**, supports `/model` and `/help`, and can read attached
-PDF, Word and text files into the conversation. Chat history and attachments are
-session-only; cloud AI and persistence are future work.
+**Status: local AI chat and Focus planning are wired up.** The app launches as a
+frameless, transparent, always-on-top puppy. Click the puppy for a random
+message, double-click to open Study / Focus / Chat / More, and the shell expands
+around the mascot while keeping its screen anchor. After five idle minutes the
+puppy falls asleep; click it to wake it up. Chat streams Markdown replies from
+the local model through **Ollama**, supports `/model`, `/help` and `/focus`, and
+can read attached PDF, Word and text files into the conversation. `/focus` reads
+an attached timetable or subject file and builds a constraint-aware study plan,
+while the Focus Planner panel supports hand-made classes, tasks and sessions.
+Chat, focus data and attachments are session-only; cloud AI and persistence are
+future work.
 
 ## Requirements
 
@@ -74,15 +77,17 @@ mvn javafx:run        # launch Puppy
 | --- | --- |
 | Drag with left mouse button | Move the puppy around the desktop |
 | Click the puppy | Show a random, friendly message |
-| Double-click the puppy | Open or close the Study / Chat / More menu |
+| Double-click the puppy | Open or close the Study / Focus / Chat / More menu |
 | Idle for five minutes | Puppy falls asleep; click it to wake it up |
 | Every two minutes | Puppy may show a quiet notification while idle |
-| Study / Chat | Open the matching panel above the puppy; Menu returns to the main menu |
-| Menu (inside a panel) | Go back to the Study / Chat / More menu |
+| Study / Focus / Chat | Open the matching panel above the puppy; Menu returns to the main menu |
+| Menu (inside a panel) | Go back to the Study / Focus / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
 | `/model` | Show the exact local model and Ollama server in the chat |
-| More | Open Settings, session chat history, Help / About, collapse, or quit |
+| `/focus` | Read attached timetable/subject files and build a study plan |
+| `/focus quick` / `/focus deep` | Build the plan and force every session to one focus type |
+| More | Open Focus Planner, Settings, session chat history, Help / About, collapse, or quit |
 | Escape | Close the current panel/menu and return to the puppy |
 | Right-click | Development menu: switch mascot states or quit |
 | Quit Puppy | Closes the window and shuts services down cleanly |
@@ -133,7 +138,7 @@ the idle frame of the sheet.
 ```
 JavaFX presentation   controllers, FXML, CSS, sprite rendering
         │  Java interfaces / method calls
-Application services  ChatService, MascotStateService (Study, research later)
+Application services  ChatService, FocusService, MascotStateService (Study, research later)
         │
 Infrastructure        Ollama HTTP client, document extraction, configuration,
                       thread pool, repositories later
@@ -151,12 +156,16 @@ Infrastructure        Ollama HTTP client, document extraction, configuration,
 | `MarkdownRenderer` | Safe Markdown-to-JavaFX rendering for chat bubbles |
 | `MascotStateService` | Thread-safe current state with listener notifications |
 | `ChatService` | Builds the bounded prompt and streams replies from the local model |
-| `OllamaClient` | Ollama `/api/chat` streaming, availability checks and friendly errors |
+| `FocusService` | Owns in-memory classes, tasks, preferences, the current plan and manual-session validation |
+| `FocusPlanner` | Deterministic scheduling: classes, free time, deadlines, subject fairness, breaks and block sizes |
+| `FocusPlanExtractor` | Reads timetable/task files; the Ollama implementation asks the local model for strict JSON |
+| `OllamaClient` | Ollama `/api/chat` streaming, JSON mode, availability checks and friendly errors |
 | `ChatPromptBuilder` | System prompt, document context and recent-history limits |
 | `DocumentTextExtractor` | PDF (PDFBox), DOCX/DOC (Apache POI), TXT and Markdown extraction |
 | `StudyTimer` | Timestamp-based Pomodoro countdown (25:00 focus / 5:00 break, test mode) |
 | `MockChatResponder` | Legacy stand-in used by its unit test; no longer connected to the UI |
 | `ChatController` / `StudyController` | Streaming chat with attachments and the Pomodoro panel |
+| `FocusController` | Import, classes, tasks, manual sessions, plan list, countdown and completion |
 | `SettingsController` | In-session desktop settings and local-model information |
 | `ThreadManager` | Daemon worker pool for chat, attachments and future background work |
 
@@ -176,24 +185,29 @@ src/main/java/com/puppy/
 ├── ai/           OllamaClient, OllamaException
 ├── config/       AppConfig, ServiceRegistry
 ├── controller/   MascotController, ChatController, StudyController,
-│                 SettingsController
+│                 FocusController, SettingsController
 ├── document/     DocumentTextExtractor, DocumentExtractionException
-├── enums/        MascotState, AIMode, MessageRole
-├── model/        ChatMessage, DocumentAttachment
-├── service/      ChatService, ChatPromptBuilder, MascotStateService,
-│                 DefaultMascotStateService, StudyTimer, MockChatResponder
+├── enums/        MascotState, FocusType, Priority, AIMode, MessageRole
+├── model/        ChatMessage, DocumentAttachment, ClassSlot, StudyTask,
+│                 FocusPreferences, FocusSession, FocusPlan, FocusPlannerInput,
+│                 FocusExtraction
+├── service/      ChatService, ChatPromptBuilder, FocusService, FocusPlanner,
+│                 FocusPlanExtractor, OllamaFocusPlanExtractor, FocusJsonParser,
+│                 FocusFormats, MascotStateService, DefaultMascotStateService,
+│                 StudyTimer, MockChatResponder
 ├── ui/           MascotAnimator, MascotSprites, MascotMessages, MarkdownRenderer
 └── util/         ThreadManager
 src/main/resources/
 ├── css/          puppy.css
-├── fxml/         shell.fxml, chat.fxml, study.fxml, settings.fxml
+├── fxml/         shell.fxml, chat.fxml, study.fxml, focus.fxml, settings.fxml
 ├── icons/        puppy.png
 └── sprites/      new_spritesheet.png
 src/test/java/com/puppy/
 ├── ai/           OllamaClientTest
 ├── controller/   FxmlLayoutTest
 ├── document/     DocumentTextExtractorTest
-├── service/      ChatPromptBuilderTest, ChatServiceTest,
+├── service/      ChatPromptBuilderTest, ChatServiceTest, FocusPlannerTest,
+│                 FocusJsonParserTest, FocusServiceTest,
 │                 DefaultMascotStateServiceTest, StudyTimerTest,
 │                 MockChatResponderTest
 └── ui/           MascotSpritesTest, MascotMessagesTest
@@ -202,11 +216,75 @@ src/test/java/com/puppy/
 Planned packages from the implementation plan (`repository/`, `database/`,
 `web/`) are added in their milestones.
 
+## Focus mode
+
+Focus has two entry points: `/focus` in Chat with a timetable, subject list or
+assignment sheet attached, and the Focus Planner panel from the main menu or
+More. Both share one in-memory `FocusService`, so a plan built in chat is
+immediately visible in the panel.
+
+### How a plan is built
+
+1. Puppy extracts text from up to five attached PDF, DOCX, DOC, TXT or Markdown
+   files (20 MB each).
+2. The local Ollama model reads that text and returns strict JSON classes and
+   tasks. It only extracts facts; it does not choose study times.
+3. `FocusPlanner` deterministically places blocks using the rules below.
+4. The plan is summarized in chat and Focus Planner opens automatically when
+   sessions were created.
+
+### Session types
+
+| Type | Default block | Use for |
+| --- | --- | --- |
+| Quick focus | 25 min | Lecture review, reading and notes |
+| Deep focus | 50 min | Programming, assignments and research |
+
+A task longer than its default block is split into equal blocks — a
+120-minute deep task becomes three 40-minute sessions, not 50 + 50 + 20. Every
+session carries its subject, date, start/end time, type and completion state.
+Priority is kept internally so Puppy can order the most important work first;
+it is not shown or chosen in the UI.
+
+### Scheduling constraints
+
+- Never overlaps a weekly school class, so self-study never lands inside class.
+- Stays inside the free-time window (default `08:00 - 22:00`, adjustable).
+- Finishes work on or before its deadline; work whose deadline has passed is
+  reported instead of being scheduled late.
+- Leaves a 10-minute gap between sessions and starts today at least 15 minutes
+  from the current time.
+- Gives each subject at most two sessions per day and round-robins subjects, so
+  one subject cannot consume the whole plan.
+- Plans at most 21 days ahead.
+
+### Import and manual editing
+
+- `/focus` schedules every task found in the files. `/focus quick` or
+  `/focus deep` forces every task in the plan to that type.
+- If a timetable or subject file has no task list, Puppy adds one
+  "Review class notes" quick task per subject, due in 7 days.
+- Imported classes and tasks merge with what is already loaded; exact duplicates
+  are ignored.
+- Focus Planner can add classes, tasks and one-off sessions by hand. A manual
+  session is rejected when it is in the past, outside free time, or overlaps a
+  class or another session.
+- Any session can be edited from its **Edit** button: subject, action, focus
+  type, date, start time and duration. Saving re-checks the free-time window,
+  class times and every other session that day, ignores the session's own old
+  time, and preserves its completion state. **Cancel edit** leaves it untouched.
+- Sessions support Start / Pause / Resume, a live countdown, Finish / Done and
+  Remove. A running Focus timer keeps the mascot awake.
+
+Focus data is session-only. **Generate plan** rebuilds the scheduled session
+list from the current classes and tasks; hand-made sessions are not carried into
+a new generation. Persistence is planned with the SQLite milestone.
+
 ## Local chat and document attachments
 
-The app follows the mascot → menu → Chat / Study / More flow. The expandable
-shell caches the Chat, Study and Settings panels; closing or minimizing a panel
-returns to the mascot.
+The app follows the mascot → menu → Study / Focus / Chat / More flow. The
+expandable shell caches the Chat, Study, Focus and Settings panels; closing or
+minimizing a panel returns to the mascot.
 
 - **Chat** opens in a roomy, monitor-aware panel with an Expand / Restore
   toggle. Replies stream from the local Ollama model on the shared worker pool;
@@ -215,9 +293,11 @@ returns to the mascot.
   attached. Assistant replies are rendered as Markdown (headings, emphasis,
   lists, quotes, code, links and tables), and completed messages keep their
   formatted layout in session history.
-- **Commands** run locally without contacting the model: `/model` shows the
-  exact model name and Ollama server, and `/help` lists the available commands.
-  The new-chat greeting intentionally does not name the model.
+- **Commands** run without sending a normal chat turn: `/model` shows the exact
+  model name and Ollama server, and `/help` lists the available commands. Both
+  answer locally. `/focus` sends the attached planner files to the local model
+  and builds the plan. The new-chat greeting intentionally does not name the
+  model.
 - **Sessions** support a highlighted active conversation, a scrollable history,
   smooth switching and automatic archiving of the conversation you leave. The
   current session is copied into history only when a message completes, not on
@@ -234,19 +314,24 @@ returns to the mascot.
   without stack traces.
 - **Study** keeps the 25-minute focus / 5-minute break timer with
   start/pause/reset and focus/break completion feedback.
+- **Focus** plans around classes, deadlines and free time with Quick (25 min) and
+  Deep (50 min) sessions, lets you edit or create sessions, then runs a countdown
+  for the selected session.
 - **Settings** exposes the in-session always-on-top option and shows the
   configured Ollama model and server. Cloud AI modes are not configured yet.
-- **More** offers Settings, session chat history, Help / About,
+- **More** offers Focus Planner, Settings, session chat history, Help / About,
   collapse-to-mascot and Quit.
 
-Chat history and attachments are session-only. Persistent history and provider
+Chat history, attachments and focus data are session-only. Persistent history and provider
 credentials are not implemented. A true hide-to-tray option is deferred;
 “Hide/show” safely collapses the expanded shell to the mascot.
 
 `StudyTimer` remains pure Java; `StudyController` owns the JavaFX ticker and
 calls `completePhase()` when a phase finishes. `ChatController` calls
 `ChatService` from the shared worker pool and never talks to Ollama or the
-document libraries directly.
+document libraries directly. `FocusController` calls `FocusService`; only
+`OllamaFocusPlanExtractor` asks the model for JSON, and only `FocusPlanner`
+decides when a session runs.
 
 ### Attachment limits and supported formats
 
@@ -273,6 +358,9 @@ read it yet.
 | Clean exit | `Application.stop()` → `ServiceRegistry.close()` |
 
 Known limitations: JavaFX receives mouse input across the full window rectangle,
-including transparent pixels. Chat history and attachments are session-only,
-scanned PDFs are not supported, and cloud AI configuration, persistent settings,
-a system tray and true hide/show behavior are future work.
+including transparent pixels. Chat history, attachments and focus plans are
+session-only, scanned PDFs are not supported, and cloud AI configuration,
+persistent settings, a system tray and true hide/show behavior are future work.
+Focus extraction needs the local Ollama model, caps combined document context at
+24,000 characters, and the planner works within a 21-day horizon. Regenerating a
+plan replaces the scheduled session list, including hand-made sessions.

@@ -1,6 +1,6 @@
 # Puppy AI — Implementation Status
 
-Last updated: 2026-11-15
+Last updated: 2026-11-16
 
 ## Milestones
 
@@ -9,7 +9,7 @@ Last updated: 2026-11-15
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
 | 3 | Pure Java services and SQLite persistence | Planned — see `docs/MILESTONE_3_PLAN.md` |
-| 4 | AI integration (local Ollama chat + document attachments; cloud pending) | 🟡 In progress |
+| 4 | AI integration (local Ollama chat, document attachments, Focus planner; cloud pending) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
 | 6 | Study mode, settings, integration | Pending |
 | 7 | Testing, optimization, packaging | Pending |
@@ -82,14 +82,15 @@ Last updated: 2026-11-15
 
 ## Completed (mascot and chat polish)
 
-- **Navigation:** Chat, Study, Settings and submenus now have a Menu / Back to
-  menu action. Panel close and minimize still collapse to the desktop mascot.
+- **Navigation:** Chat, Study, Focus, Settings and submenus now have a Menu /
+  Back to menu action. Panel close and minimize still collapse to the desktop
+  mascot.
 - **Hover and click:** the old hover bubble is gone. The mascot uses a hand
   cursor on hover and shows a random message from `MascotMessages` on click;
   single clicks wait briefly so double-click still opens the menu.
 - **Sleep:** after five minutes without app activity (and with no open panel,
-  menu or running study timer) the mascot enters `SLEEPING`; clicking it wakes
-  the mascot, shows a wake line and restarts the inactivity timer.
+  menu or running Study/Focus timer) the mascot enters `SLEEPING`; clicking it
+  wakes the mascot, shows a wake line and restarts the inactivity timer.
 - **Notifications:** while the mascot is idle and compact, a quiet random
   notification appears every two minutes and auto-hides after eight seconds.
 - **Chat size:** the chat panel opens at a monitor-aware 940 × 720 maximum,
@@ -104,16 +105,70 @@ Last updated: 2026-11-15
   session snapshot is updated when a message completes or the user switches
   conversations, avoiding a full history copy per token.
 - **Commands:** `/model` reports the exact local model and Ollama server;
-  `/help` lists commands. The new-chat greeting no longer names the model.
+  `/help` lists commands. `/focus` builds a plan from attached files. The
+  new-chat greeting no longer names the model.
 - **Tests:** `MascotMessagesTest`, Markdown rendering and `/model` assertions in
   `FxmlLayoutTest`, and the updated greeting contract in `ChatServiceTest`.
+
+## Completed (Focus planner)
+
+- **Domain model:** `FocusType` (Quick 25 min / Deep 50 min), `Priority`,
+  `ClassSlot`, `StudyTask`, `FocusPreferences`, `FocusSession`, `FocusPlan`,
+  `FocusPlannerInput` and `FocusExtraction`. Sessions carry subject, date,
+  start/end, type and a completion flag. Priority stays internal for ordering
+  and is not exposed in the UI.
+- **Deterministic planning:** `FocusPlanner` schedules only inside the daily free
+  window (default 08:00–22:00), subtracts weekly class times, respects
+  deadlines, leaves 10-minute gaps, caps each subject at two sessions per day,
+  round-robins subjects for fairness and plans at most 21 days ahead. Today's
+  first session starts at least 15 minutes after the current time.
+- **Block sizing:** long tasks are split into equal blocks rather than one full
+  block plus a remainder; a 120-minute deep task becomes 3 × 40 minutes.
+- **Tolerant parsing:** `FocusFormats` reads `18:00`, `6h30`, `6h30 chieu`,
+  ISO and `20/11/2026` dates, English/Vietnamese weekdays, Quick/Deep keywords,
+  priorities and durations such as `1h30`, `1.5h` and `45 phút`.
+- **Model extraction:** `OllamaFocusPlanExtractor` asks the local model for
+  strict JSON via the new `OllamaClient.jsonChat` (`format: json`, low
+  temperature). `FocusJsonParser` accepts fenced/prefaced JSON, skips invalid
+  rows with notes, and creates review tasks when a file lists only subjects.
+- **Application service:** `FocusService` owns classes, tasks, preferences and
+  the current plan; it merges imports, deduplicates facts, adds the timetable
+  review fallback, validates hand-made and edited sessions, and
+  completes/removes sessions. Manual tasks and sessions default to the internal
+  medium priority.
+- **Focus Planner panel:** `focus.fxml` + `FocusController` provide file import,
+  free-time selectors, Classes/Tasks/Session tabs, a date-grouped session list
+  with Quick/Deep badges, a live `StudyTimer` countdown, and
+  Start/Pause/Finish/Remove/Clear controls. Priority is not shown. Each session
+  has an **Edit** action that opens the Session tab, and saving re-validates
+  free time, classes and same-day session overlaps while preserving completion;
+  **Cancel edit** restores the add-session form.
+- **Chat command:** `/focus` requires attachments, runs extraction on the shared
+  worker pool, replies with a Markdown plan summary and opens Focus Planner.
+  `/focus quick` and `/focus deep` force the session type. `/help` and the chat
+  placeholder were updated.
+- **Navigation:** a Focus button in the main menu and a Focus planner item in
+  More; the Focus panel is cached, monitor-aware (980 × 840 preferred, clamped
+  to the screen), and a running Focus timer blocks the idle sleep timer.
+- **Layout fix:** FXML multi-class attributes use commas
+  (`styleClass="panel-card, focus-panel"`); space-separated values were parsed as
+  one CSS class, so panel styling had not been applied.
+- **Tests:** `FocusPlannerTest` (class/free-time conflicts, deadlines, subject
+  fairness, per-day caps, block sizes, warnings), `FocusJsonParserTest`
+  (strict/fenced/Vietnamese input, invalid rows, subject fallback) and
+  `FocusServiceTest` (merge, override, review fallback, manual validation,
+  session editing and completion). `OllamaClientTest` now checks JSON-mode
+  requests, and `FxmlLayoutTest` opens the Focus panel.
 
 ## Services used by the UI
 
 | Class | How the UI should use it |
 | --- | --- |
 | `ChatService` | `ChatController` gets it from `ServiceRegistry`, streams replies with `reply(...)`, and reads attachments with `readDocument(...)`. |
-| `DocumentTextExtractor` | Used through `ChatService.readDocument(...)`; never called from the JavaFX thread. |
+| `FocusService` | `FocusController` gets it from `ServiceRegistry`; `/focus` calls `importDocuments(...)` on the worker pool. Shares classes, tasks, preferences, plan and session state with the panel. |
+| `FocusPlanner` | Pure-Java scheduling owned by `FocusService`; the UI never makes placement decisions. |
+| `FocusPlanExtractor` | Infrastructure behind `FocusService`; `OllamaFocusPlanExtractor` reads files, while tests use a fake extractor. |
+| `DocumentTextExtractor` | Used through `ChatService.readDocument(...)` and `FocusService.importFromFiles(...)`; never called from the JavaFX thread. |
 | `OllamaClient` | Infrastructure owned by `ChatService`; controllers never construct it. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
 | `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
@@ -148,6 +203,19 @@ Last updated: 2026-11-15
   refresh) belong to milestone 6.
 - **Data directory:** `AppConfig` resolves `%LOCALAPPDATA%\PuppyAI` (or
   `~/.local/share/PuppyAI`) but nothing writes to it yet.
+- **Focus pipeline:** the local model only extracts facts from timetable/task
+  files; `FocusPlanner` makes every scheduling decision. This keeps the hard
+  constraints deterministic and testable when the model is unavailable. Import
+  reads up to five files (20 MB each) and caps combined document context at
+  24,000 characters; the planner horizon is 21 days.
+- **Focus fallback:** a timetable without tasks gets one "Review class notes"
+  Quick task per subject, due in seven days. Imports merge into the existing
+  class/task set and exact duplicates are ignored.
+- **Focus sessions:** sessions are in memory only. `Generate plan` rebuilds the
+  scheduled list from classes and tasks; hand-made sessions are not carried into
+  a regenerated plan. Manual and generated sessions can be edited in the Session
+  tab, with placement re-validated on save. A running Focus countdown keeps the
+  mascot in STUDYING and prevents the idle-sleep timer from firing.
 
 ## Known bugs / limitations
 
@@ -157,8 +225,16 @@ Last updated: 2026-11-15
   `docs/SPRITESHEET_GUIDE.md`; the animator cuts exact cells either way.
 - The entire 336 × 252 window captures mouse input, including transparent
   pixels; per-pixel hit testing is not part of the MVP.
-- Chat history and attachments are session-only; SQLite persistence is a later
-  milestone.
+- Chat history, attachments and all Focus data (classes, tasks, preferences and
+  sessions) are session-only; SQLite persistence is a later milestone.
+- Regenerating a Focus plan replaces the scheduled session list, so hand-made
+  sessions are lost unless they are recreated. Manual and generated sessions are
+  not yet linked to source tasks.
+- Focus extraction requires Ollama and the configured model. Combined document
+  text is capped at 24,000 characters, and scanned/image-only files are not
+  supported.
+- The planner uses weekly class slots and a 21-day horizon; it does not model
+  exam weeks, one-off timetable changes or multi-week recurring courses.
 - Scanned/image-only PDFs have no selectable text and are rejected. Password-
   protected files and files above 20 MB are also rejected.
 - Very long documents are truncated to fit the model context, so the answer may
@@ -174,6 +250,8 @@ Last updated: 2026-11-15
 
 - Add study presets (e.g. 25/5 and 50/10), with custom durations later.
 - Add persistent/searchable chat history after SQLite persistence is ready.
+- Add persistent Focus plans and link manual sessions to their source tasks so a
+  regenerated plan can keep them.
 - Add true hide-to-tray only with a reliable restore path.
 - Add keyboard navigation and a first-run interaction walkthrough.
 

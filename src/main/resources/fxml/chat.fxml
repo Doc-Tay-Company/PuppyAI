@@ -48,7 +48,7 @@
                         </content>
                     </ScrollPane>
                     <Label fx:id="thinkingLabel" text="Puppy is thinking..."
-                           styleClass="muted-copy thinking-label"
+                           styleClass="muted-copy, thinking-label"
                            visible="false" managed="false"/>
                 </VBox>
             </center>
@@ -63,7 +63,7 @@
                         <Button fx:id="attachButton" text="Attach" onAction="#attachDocument"
                                 styleClass="quiet-button"/>
                         <TextField fx:id="messageInput"
-                                   promptText="Ask anything, attach a PDF/DOCX, or type /model..."
+                                   promptText="Ask anything, attach a file, type /focus or /model..."
                                    onAction="#sendMessage" HBox.hgrow="ALWAYS"/>
                         <Button text="Send" onAction="#sendMessage" fx:id="sendButton"
                                 styleClass="primary-button"/>

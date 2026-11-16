@@ -2,11 +2,17 @@ package com.puppy.controller;
 
 import com.puppy.ai.OllamaException;
 import com.puppy.document.DocumentExtractionException;
+import com.puppy.enums.FocusType;
 import com.puppy.enums.MascotState;
 import com.puppy.enums.MessageRole;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
+import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusSession;
 import com.puppy.service.ChatService;
+import com.puppy.service.FocusFormats;
+import com.puppy.service.FocusPlanningException;
+import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
 import com.puppy.ui.MarkdownRenderer;
 import javafx.animation.KeyFrame;
@@ -101,11 +107,13 @@ public class ChatController {
     private final List<DocumentAttachment> attachments = new ArrayList<>();
 
     private ChatService chatService;
+    private FocusService focusService;
     private ExecutorService executor;
     private MascotStateService mascotStateService;
     private Runnable closeAction;
     private Runnable minimizeAction;
     private Runnable menuAction;
+    private Runnable focusOpenAction;
     private BooleanSupplier expandAction;
 
     private boolean responding;
@@ -145,16 +153,19 @@ public class ChatController {
     }
 
     public void attach(ChatService chatService, ExecutorService executor,
-                       MascotStateService mascotStateService,
+                       MascotStateService mascotStateService, FocusService focusService,
                        Runnable closeAction, Runnable minimizeAction,
-                       Runnable menuAction, BooleanSupplier expandAction) {
+                       Runnable menuAction, BooleanSupplier expandAction,
+                       Runnable focusOpenAction) {
         this.chatService = Objects.requireNonNull(chatService, "chatService");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.mascotStateService = Objects.requireNonNull(mascotStateService, "mascotStateService");
+        this.focusService = Objects.requireNonNull(focusService, "focusService");
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
         this.minimizeAction = Objects.requireNonNull(minimizeAction, "minimizeAction");
         this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
         this.expandAction = Objects.requireNonNull(expandAction, "expandAction");
+        this.focusOpenAction = Objects.requireNonNull(focusOpenAction, "focusOpenAction");
         expandButton.setText("Expand");
 
         talkingTransition = new PauseTransition(Duration.millis(650));
@@ -240,16 +251,22 @@ public class ChatController {
             return false;
         }
         String command = input.strip().split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
+        if ("/focus".equals(command)) {
+            startFocusCommand(input);
+            return true;
+        }
         String reply = switch (command) {
             case "/model" -> modelCommandReply();
             case "/help" -> """
                     **Puppy commands**
 
+                    - `/focus` - read attached timetable/subject files and build focus sessions
+                    - `/focus quick` or `/focus deep` - force one focus session type
                     - `/model` - show the local model and server
                     - `/help` - show this command list
 
                     Everything else is sent to the local model.""";
-            default -> "I don't know `" + input.strip() + "` yet. Try `/model` or `/help`.";
+            default -> "I don't know `" + input.strip() + "` yet. Try `/focus`, `/model` or `/help`.";
         };
 
         addMessage("user", input, List.of());
@@ -260,6 +277,171 @@ public class ChatController {
         }
         scrollToBottom();
         return true;
+    }
+
+    /**
+     * {@code /focus} turns attached files into a plan through the local model.
+     * It runs like a normal reply, so closing the panel or cancelling the
+     * conversation also cancels the extraction.
+     */
+    private void startFocusCommand(String input) {
+        String[] parts = input.strip().split("\\s+");
+        FocusType override = null;
+        if (parts.length > 1) {
+            String option = parts[1].toLowerCase(Locale.ROOT);
+            if (option.equals("quick")) {
+                override = FocusType.QUICK;
+            } else if (option.equals("deep")) {
+                override = FocusType.DEEP;
+            } else {
+                addMessage("user", input, List.of());
+                addMessage("assistant", """
+                        Use `/focus` on its own, or `/focus quick` / `/focus deep` to force a type.
+                        Attach your timetable or subject file in the same message.""", List.of());
+                scrollToBottom();
+                return;
+            }
+        }
+
+        List<String> fileNames = attachments.stream()
+                .map(DocumentAttachment::fileName)
+                .toList();
+        addMessage("user", input, fileNames);
+
+        if (attachments.isEmpty()) {
+            addMessage("assistant", """
+                    **Focus needs one file**
+
+                    Attach your timetable, subject list or assignment sheet, then send `/focus`.
+                    Supported files: PDF, DOCX, DOC, TXT and MD. You can also build the plan by
+                    hand in **Focus Planner**.
+
+                    - `/focus` - plan every task from the files
+                    - `/focus quick` - force quick-focus sessions
+                    - `/focus deep` - force deep-focus sessions""", List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return;
+        }
+        if (focusService == null) {
+            addMessage("assistant",
+                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+            scrollToBottom();
+            return;
+        }
+
+        responding = true;
+        thinkingLabel.setManaged(true);
+        thinkingLabel.setVisible(true);
+        updateComposerState();
+        mascotStateService.setState(MascotState.THINKING);
+
+        int generation = ++responseGeneration;
+        List<DocumentAttachment> requestAttachments = List.copyOf(attachments);
+        FocusType requestedType = override;
+        try {
+            inFlight = executor.submit(() -> {
+                try {
+                    FocusPlan plan = focusService.importDocuments(requestAttachments, requestedType);
+                    Platform.runLater(() -> completeFocusCommand(generation, plan));
+                } catch (FocusPlanningException e) {
+                    String message = e.getMessage() == null || e.getMessage().isBlank()
+                            ? "I couldn't build a focus plan from those files."
+                            : e.getMessage();
+                    Platform.runLater(() -> failFocusCommand(generation, message));
+                } catch (RuntimeException e) {
+                    Platform.runLater(() -> failFocusCommand(generation,
+                            "Something went wrong while planning. Please try again."));
+                } finally {
+                    Thread.interrupted();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            responding = false;
+            inFlight = null;
+            thinkingLabel.setManaged(false);
+            thinkingLabel.setVisible(false);
+            updateComposerState();
+            addMessage("assistant",
+                    "I couldn't start the planner because the application is shutting down.",
+                    List.of());
+            mascotStateService.resetToIdle();
+        }
+    }
+
+    private void completeFocusCommand(int generation, FocusPlan plan) {
+        if (generation != responseGeneration || !responding) {
+            return;
+        }
+        addMessage("assistant", focusPlanSummary(plan), List.of());
+        responding = false;
+        inFlight = null;
+        thinkingLabel.setManaged(false);
+        thinkingLabel.setVisible(false);
+        updateComposerState();
+        scrollToBottom();
+        if (!plan.sessions().isEmpty()) {
+            mascotStateService.setState(MascotState.TALKING);
+            talkingTransition.playFromStart();
+            Platform.runLater(focusOpenAction);
+        } else {
+            mascotStateService.resetToIdle();
+        }
+        messageInput.requestFocus();
+    }
+
+    private void failFocusCommand(int generation, String message) {
+        if (generation != responseGeneration || !responding) {
+            return;
+        }
+        responding = false;
+        inFlight = null;
+        thinkingLabel.setManaged(false);
+        thinkingLabel.setVisible(false);
+        updateComposerState();
+        addMessage("assistant", message, List.of());
+        scrollToBottom();
+        mascotStateService.resetToIdle();
+        messageInput.requestFocus();
+    }
+
+    private static String focusPlanSummary(FocusPlan plan) {
+        StringBuilder summary = new StringBuilder("**Focus plan ready**\n\n");
+        if (plan.sessions().isEmpty()) {
+            summary.append("I couldn't place any sessions. Check the notes below, then adjust ")
+                    .append("your classes, deadlines or free time in Focus Planner.");
+        } else {
+            summary.append(plan.sessions().size()).append(" sessions - ")
+                    .append(formatMinutes(plan.totalMinutes())).append(" planned for ")
+                    .append(plan.subjectCount()).append(" subjects.\n\n");
+            plan.sessions().stream().limit(8).forEach(session ->
+                    summary.append("- **").append(FocusFormats.formatDate(session.date()))
+                            .append(" ").append(session.timeRange()).append("** - ")
+                            .append(session.subject()).append(": ")
+                            .append(session.title()).append(" (")
+                            .append(session.type().label()).append(")\n"));
+            if (plan.sessions().size() > 8) {
+                summary.append("- ...and ").append(plan.sessions().size() - 8)
+                        .append(" more in Focus Planner\n");
+            }
+            summary.append("\nI opened **Focus Planner** so you can start, tweak or add sessions.");
+        }
+        if (!plan.warnings().isEmpty()) {
+            summary.append("\n\n**Notes**\n");
+            for (String warning : plan.warnings()) {
+                summary.append("- ").append(warning).append('\n');
+            }
+        }
+        return summary.toString().strip();
+    }
+
+    private static String formatMinutes(int minutes) {
+        int hours = minutes / 60;
+        int rest = minutes % 60;
+        if (hours == 0) {
+            return rest + " minutes";
+        }
+        return rest == 0 ? hours + " hours" : hours + "h " + rest + "m";
     }
 
     private String modelCommandReply() {

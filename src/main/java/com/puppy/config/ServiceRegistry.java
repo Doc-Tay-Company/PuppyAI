@@ -4,9 +4,12 @@ import com.puppy.ai.OllamaClient;
 import com.puppy.document.DocumentTextExtractor;
 import com.puppy.service.ChatService;
 import com.puppy.service.DefaultMascotStateService;
+import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
+import com.puppy.service.OllamaFocusPlanExtractor;
 import com.puppy.util.ThreadManager;
 
+import java.time.Clock;
 import java.util.Objects;
 
 /**
@@ -23,6 +26,7 @@ public final class ServiceRegistry implements AutoCloseable {
     private final ThreadManager threadManager;
     private final MascotStateService mascotStateService;
     private final ChatService chatService;
+    private final FocusService focusService;
 
     private boolean started;
     private boolean closed;
@@ -32,7 +36,11 @@ public final class ServiceRegistry implements AutoCloseable {
         this.threadManager = new ThreadManager(config.appName());
         this.mascotStateService = new DefaultMascotStateService();
         OllamaClient ollamaClient = new OllamaClient(config.ollamaUrl(), config.ollamaModel());
-        this.chatService = new ChatService(ollamaClient, new DocumentTextExtractor());
+        DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
+        this.chatService = new ChatService(ollamaClient, documentTextExtractor);
+        this.focusService = new FocusService(
+                new OllamaFocusPlanExtractor(ollamaClient, Clock.systemDefaultZone()),
+                documentTextExtractor);
     }
 
     /** Initializes the services that need explicit startup. Safe to call once. */
@@ -62,6 +70,11 @@ public final class ServiceRegistry implements AutoCloseable {
      */
     public ChatService chatService() {
         return chatService;
+    }
+
+    /** In-memory Focus planner shared by the Focus panel and the /focus chat command. */
+    public FocusService focusService() {
+        return focusService;
     }
 
     public ThreadManager threadManager() {

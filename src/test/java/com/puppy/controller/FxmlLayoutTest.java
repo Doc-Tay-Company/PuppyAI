@@ -52,6 +52,7 @@ class FxmlLayoutTest {
                         "/fxml/shell.fxml",
                         "/fxml/chat.fxml",
                         "/fxml/study.fxml",
+                        "/fxml/focus.fxml",
                         "/fxml/settings.fxml")) {
                     new FXMLLoader(getClass().getResource(resource)).load();
                 }
@@ -158,6 +159,19 @@ class FxmlLayoutTest {
 
                 Event.fireEvent(mascotDock, doubleClick());
                 ((Button) menu.getChildren().get(1)).fire();
+                shell.applyCss();
+                shell.layout();
+                assertTrue(shell.lookup(".panel-host").isVisible(),
+                        "Focus should open in the panel host");
+                assertEquals("Focus Planner",
+                        ((Label) shell.lookup(".focus-panel .panel-title")).getText(),
+                        "The Focus panel title should identify the planner");
+                assertTrue(shell.lookup("#sessionsBox").isVisible(),
+                        "Focus should show the session list");
+                closeActivePanel(shell, 0);
+
+                Event.fireEvent(mascotDock, doubleClick());
+                ((Button) menu.getChildren().get(2)).fire();
                 assertTrue(shell.lookup(".panel-host").isVisible(),
                         "Chat should open in the panel host");
                 shell.applyCss();
@@ -176,9 +190,9 @@ class FxmlLayoutTest {
                 closeActivePanel(shell, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
-                ((Button) menu.getChildren().get(2)).fire();
+                ((Button) menu.getChildren().get(3)).fire();
                 VBox moreMenu = (VBox) ((StackPane) shell.lookup(".menu-host")).getChildren().get(0);
-                ((Button) moreMenu.getChildren().get(1)).fire();
+                ((Button) moreMenu.getChildren().get(2)).fire();
                 assertTrue(shell.lookup(".panel-host").isVisible(),
                         "Settings should open from More");
                 CheckBox alwaysOnTop = (CheckBox) shell.lookup("#alwaysOnTopCheck");
@@ -188,9 +202,9 @@ class FxmlLayoutTest {
                 closeActivePanel(shell, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
-                ((Button) menu.getChildren().get(2)).fire();
+                ((Button) menu.getChildren().get(3)).fire();
                 moreMenu = (VBox) ((StackPane) shell.lookup(".menu-host")).getChildren().get(0);
-                ((Button) moreMenu.getChildren().get(2)).fire();
+                ((Button) moreMenu.getChildren().get(3)).fire();
                 assertTrue(shell.lookup("#historyPane").isVisible(),
                         "More should open session chat history");
                 closeActivePanel(shell, 1);

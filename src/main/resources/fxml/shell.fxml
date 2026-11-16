@@ -15,6 +15,7 @@
     <StackPane fx:id="menuHost" styleClass="menu-host" visible="false" managed="false">
         <HBox fx:id="mainMenu" styleClass="main-menu" spacing="4">
             <Button text="Study" onAction="#openStudy" styleClass="menu-button"/>
+            <Button text="Focus" onAction="#openFocus" styleClass="menu-button"/>
             <Button text="Chat" onAction="#openChat" styleClass="menu-button"/>
             <Button text="More" onAction="#openMore" styleClass="menu-button"/>
         </HBox>

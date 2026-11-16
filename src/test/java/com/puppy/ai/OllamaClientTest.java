@@ -62,6 +62,25 @@ class OllamaClientTest {
     }
 
     @Test
+    void jsonChatAsksOllamaForJsonAndReturnsTheWholeObject() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server.createContext("/api/chat", exchange -> {
+            requestBody.set(readBody(exchange));
+            respondJsonLines(exchange, 200,
+                    "{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"tasks\\\":[]}\"},\"done\":false}",
+                    "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}");
+        });
+
+        String reply = client().jsonChat(List.of(ChatMessage.user("Extract the timetable")));
+
+        assertEquals("{\"tasks\":[]}", reply);
+        assertTrue(requestBody.get().contains("\"format\":\"json\""),
+                "Focus extraction must request Ollama's JSON output mode");
+        assertTrue(requestBody.get().contains("\"temperature\":0.1"),
+                "JSON extraction should use a low temperature");
+    }
+
+    @Test
     void reportsMissingModelsWithAPullHint() throws Exception {
         server.createContext("/api/chat", exchange -> respondJsonLines(exchange, 404,
                 "{\"error\":\"model 'test-model' not found\"}"));

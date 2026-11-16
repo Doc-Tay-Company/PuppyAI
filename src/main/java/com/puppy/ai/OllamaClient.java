@@ -137,6 +137,19 @@ public final class OllamaClient {
      *                         missing, the request fails or it is interrupted
      */
     public String chat(List<ChatMessage> messages, Consumer<String> onToken) throws OllamaException {
+        return send(messages, onToken, false);
+    }
+
+    /**
+     * Sends a request that asks Ollama to return a single JSON object. Used by
+     * the Focus planner to read timetable and task files reliably.
+     */
+    public String jsonChat(List<ChatMessage> messages) throws OllamaException {
+        return send(messages, token -> { }, true);
+    }
+
+    private String send(List<ChatMessage> messages, Consumer<String> onToken, boolean json)
+            throws OllamaException {
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(onToken, "onToken");
         if (messages.isEmpty()) {
@@ -150,7 +163,7 @@ public final class OllamaClient {
                     .timeout(CHAT_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/x-ndjson")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody(messages)))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody(messages, json)))
                     .build();
         } catch (JsonProcessingException e) {
             throw new OllamaException(
@@ -240,7 +253,8 @@ public final class OllamaClient {
         return reply.toString();
     }
 
-    private byte[] requestBody(List<ChatMessage> messages) throws JsonProcessingException {
+    private byte[] requestBody(List<ChatMessage> messages, boolean json)
+            throws JsonProcessingException {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", model);
         ArrayNode messageNodes = root.putArray("messages");
@@ -253,8 +267,11 @@ public final class OllamaClient {
         // Qwen 3.5 supports thinking; the chat UI shows the answer, not the
         // private reasoning, and disabling it makes replies start faster.
         root.put("think", false);
+        if (json) {
+            root.put("format", "json");
+        }
         ObjectNode options = root.putObject("options");
-        options.put("temperature", TEMPERATURE);
+        options.put("temperature", json ? 0.1 : TEMPERATURE);
         options.put("num_ctx", NUM_CONTEXT);
         options.put("num_predict", NUM_PREDICT);
         return mapper.writeValueAsBytes(root);
