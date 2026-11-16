@@ -2,34 +2,16 @@ package com.puppy.ui;
 
 import com.puppy.enums.MascotState;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Describes how the mascot spritesheet is laid out and which animation each
- * {@link MascotState} uses.
- *
- * <p>The sheet is a regular grid: {@value #COLUMNS} frames per row and one row
- * per mascot state, in {@link MascotState} declaration order. The frame size is
- * derived from the sheet's pixel size, so replacing the artwork with a sheet of
- * the same grid shape needs no code changes.</p>
- *
- * <pre>
- * row 0  IDLE      row 1  HAPPY     row 2  THINKING
- * row 3  TALKING   row 4  STUDYING  row 5  SLEEPING
- * </pre>
+ * Describes the ordered image frames and timing used by each mascot state.
  */
 public final class MascotSprites {
-
-    /** Classpath location of the mascot spritesheet. */
-    public static final String SHEET_RESOURCE = "/sprites/new_spritesheet.png";
-
-    /** Frames per animation (columns in the sheet). */
-    public static final int COLUMNS = 6;
-
-    /** Animations in the sheet (rows). */
-    public static final int ROWS = 6;
 
     /** Classpath location of the application icon. */
     public static final String ICON_RESOURCE = "/icons/puppy.png";
@@ -37,22 +19,26 @@ public final class MascotSprites {
     /**
      * Timing for one mascot animation.
      *
-     * @param row                 spritesheet row that holds the frames
-     * @param frameCount          number of frames taken from that row
+     * @param frameResources      ordered classpath locations of the frame images
      * @param frameDurationMillis how long one frame is shown at normal speed
      */
-    public record Animation(int row, int frameCount, double frameDurationMillis) {
+    public record Animation(List<String> frameResources, double frameDurationMillis) {
 
         public Animation {
-            if (row < 0 || row >= ROWS) {
-                throw new IllegalArgumentException("row must be between 0 and " + (ROWS - 1));
+            frameResources = List.copyOf(Objects.requireNonNull(frameResources, "frameResources"));
+            if (frameResources.isEmpty()) {
+                throw new IllegalArgumentException("frameResources must not be empty");
             }
-            if (frameCount < 1 || frameCount > COLUMNS) {
-                throw new IllegalArgumentException("frameCount must be between 1 and " + COLUMNS);
+            if (frameResources.stream().anyMatch(String::isBlank)) {
+                throw new IllegalArgumentException("frame resource paths must not be blank");
             }
             if (!Double.isFinite(frameDurationMillis) || frameDurationMillis <= 0) {
                 throw new IllegalArgumentException("frameDurationMillis must be positive");
             }
+        }
+
+        public int frameCount() {
+            return frameResources.size();
         }
     }
 
@@ -63,13 +49,21 @@ public final class MascotSprites {
 
     private static Map<MascotState, Animation> animations() {
         Map<MascotState, Animation> map = new EnumMap<>(MascotState.class);
-        map.put(MascotState.IDLE, new Animation(0, COLUMNS, 220));
-        map.put(MascotState.HAPPY, new Animation(1, COLUMNS, 130));
-        map.put(MascotState.THINKING, new Animation(2, COLUMNS, 260));
-        map.put(MascotState.TALKING, new Animation(3, COLUMNS, 110));
-        map.put(MascotState.STUDYING, new Animation(4, COLUMNS, 400));
-        map.put(MascotState.SLEEPING, new Animation(5, COLUMNS, 600));
+        map.put(MascotState.IDLE, animation("idle", 3, 2_000));
+        map.put(MascotState.HAPPY, animation("happy", 2, 2_000));
+        map.put(MascotState.THINKING, animation("thinking", 2, 500));
+        map.put(MascotState.TALKING, animation("talking", 2, 2_000));
+        map.put(MascotState.STUDYING, animation("study", 2, 2_000));
+        map.put(MascotState.SLEEPING, animation("sleep", 2, 1_000));
         return Map.copyOf(map);
+    }
+
+    private static Animation animation(String folder, int frameCount, double frameDurationMillis) {
+        List<String> frames = new ArrayList<>(frameCount);
+        for (int frame = 0; frame < frameCount; frame++) {
+            frames.add("/sprites/" + folder + "/" + frame + ".png");
+        }
+        return new Animation(frames, frameDurationMillis);
     }
 
     public static Animation animationFor(MascotState state) {

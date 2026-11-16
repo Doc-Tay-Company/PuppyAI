@@ -7,53 +7,56 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Guards the mascot artwork contract: the spritesheet must divide into the grid
- * the animator expects, and every state must own one row with real artwork.
- */
+/** Guards the mascot frame resources and per-state animation configuration. */
 class MascotSpritesTest {
 
+    private static final Map<MascotState, Integer> FRAME_COUNTS = Map.of(
+            MascotState.IDLE, 3,
+            MascotState.HAPPY, 2,
+            MascotState.THINKING, 2,
+            MascotState.TALKING, 2,
+            MascotState.STUDYING, 2,
+            MascotState.SLEEPING, 2);
+
+    private static final Map<MascotState, Double> FRAME_DURATIONS = Map.of(
+            MascotState.IDLE, 2_000.0,
+            MascotState.HAPPY, 2_000.0,
+            MascotState.THINKING, 500.0,
+            MascotState.TALKING, 2_000.0,
+            MascotState.STUDYING, 2_000.0,
+            MascotState.SLEEPING, 1_000.0);
+
     @Test
-    void everyStateUsesItsOwnRow() {
-        Set<Integer> rows = new HashSet<>();
+    void eachStateHasExpectedFrameCountAndTiming() {
+        assertEquals(FRAME_COUNTS.keySet(), Set.of(MascotState.values()));
         for (MascotState state : MascotState.values()) {
             MascotSprites.Animation animation = MascotSprites.animationFor(state);
-            assertEquals(MascotSprites.COLUMNS, animation.frameCount(),
-                    "Expected every row of the sheet to be used: " + state);
-            assertTrue(rows.add(animation.row()),
-                    "Two states share a spritesheet row: " + state);
+            assertEquals(FRAME_COUNTS.get(state), animation.frameCount(), "Frame count for " + state);
+            assertEquals(FRAME_DURATIONS.get(state), animation.frameDurationMillis(), "Frame duration for " + state);
         }
-        assertEquals(MascotSprites.ROWS, rows.size(),
-                "The sheet declares " + MascotSprites.ROWS + " rows but states mapped " + rows);
     }
 
     @Test
-    void spritesheetDividesIntoTheFrameGrid() throws IOException {
-        BufferedImage sheet = loadSheet();
-        assertEquals(0, sheet.getWidth() % MascotSprites.COLUMNS,
-                "Spritesheet width must divide into " + MascotSprites.COLUMNS + " frames");
-        assertEquals(0, sheet.getHeight() % MascotSprites.ROWS,
-                "Spritesheet height must divide into " + MascotSprites.ROWS + " rows");
-    }
-
-    @Test
-    void everyFrameCellContainsArtwork() throws IOException {
-        BufferedImage sheet = loadSheet();
-        int frameWidth = sheet.getWidth() / MascotSprites.COLUMNS;
-        int frameHeight = sheet.getHeight() / MascotSprites.ROWS;
-
-        for (int row = 0; row < MascotSprites.ROWS; row++) {
-            for (int column = 0; column < MascotSprites.COLUMNS; column++) {
-                assertTrue(cellHasVisiblePixels(sheet, column * frameWidth, row * frameHeight,
-                                frameWidth, frameHeight),
-                        "Empty sprite cell at row " + row + ", column " + column);
+    void everyFrameResourceIsAReadableTransparentPng() throws IOException {
+        for (MascotState state : MascotState.values()) {
+            MascotSprites.Animation animation = MascotSprites.animationFor(state);
+            for (String resource : animation.frameResources()) {
+                try (InputStream stream = MascotSpritesTest.class.getResourceAsStream(resource)) {
+                    assertNotNull(stream, "Missing mascot frame: " + resource);
+                    BufferedImage frame = ImageIO.read(stream);
+                    assertNotNull(frame, "Mascot frame is not a readable image: " + resource);
+                    assertEquals(384, frame.getWidth(), "Unexpected frame width: " + resource);
+                    assertEquals(384, frame.getHeight(), "Unexpected frame height: " + resource);
+                    assertTrue(frame.getColorModel().hasAlpha(), "Mascot frame has no alpha channel: " + resource);
+                    assertEquals(0, frame.getRGB(0, 0) >>> 24, "Mascot frame background is not transparent: " + resource);
+                }
             }
         }
     }
@@ -64,26 +67,5 @@ class MascotSpritesTest {
             assertNotNull(stream, "Missing application icon: " + MascotSprites.ICON_RESOURCE);
             assertNotNull(ImageIO.read(stream), "Application icon is not a readable image");
         }
-    }
-
-    private static BufferedImage loadSheet() throws IOException {
-        try (InputStream stream = MascotSpritesTest.class.getResourceAsStream(MascotSprites.SHEET_RESOURCE)) {
-            assertNotNull(stream, "Missing mascot spritesheet: " + MascotSprites.SHEET_RESOURCE);
-            BufferedImage sheet = ImageIO.read(stream);
-            assertNotNull(sheet, "Mascot spritesheet is not a readable image");
-            return sheet;
-        }
-    }
-
-    private static boolean cellHasVisiblePixels(BufferedImage sheet,
-                                                int x, int y, int width, int height) {
-        for (int py = y; py < y + height; py++) {
-            for (int px = x; px < x + width; px++) {
-                if ((sheet.getRGB(px, py) >>> 24) != 0) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 }
