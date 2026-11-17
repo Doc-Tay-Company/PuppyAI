@@ -23,8 +23,9 @@ class ChatServiceTest {
         ChatService service = service();
 
         assertEquals("Qwen3.5 9B", service.localModelLabel());
-        assertTrue(service.greeting().contains("/model"),
-                "The new-chat greeting should point at the /model command");
+        assertEquals("Hi! I'm Puppy, your desktop companion. Ask me anything.",
+                service.greeting(),
+                "The new-chat greeting should end at Ask me anything");
         assertFalse(service.greeting().contains("Qwen3.5 9B"),
                 "The new-chat greeting should not name the model");
         assertTrue(service.describeLocalModel().contains("hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M"));

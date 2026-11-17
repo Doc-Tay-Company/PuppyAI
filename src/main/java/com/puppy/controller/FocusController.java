@@ -270,7 +270,15 @@ public class FocusController {
                 + " - " + availableTo.getValue() + " and avoid every class.");
     }
 
-    /** Reloads every list from the shared service. Public for the /focus chat flow. */
+    /** Reloads the free-time selectors after Chat set a new window. */
+    public void refreshPreferences() {
+        if (focusService == null) {
+            return;
+        }
+        loadPreferences();
+    }
+
+    /** Reloads every list from the shared service. Public for the chat focus flow. */
     public void refresh() {
         if (focusService == null) {
             return;

@@ -225,6 +225,9 @@ public class MascotController {
             panelHost.setManaged(true);
             panelHost.setVisible(true);
             activePanel = panel;
+            if (panel == Panel.FOCUS && focusController != null) {
+                focusController.refreshPreferences();
+            }
             // Panel windows must fit the panel above the mascot dock, not just the panel.
             switch (panel) {
                 case STUDY -> resizeShell(STUDY_WIDTH, STUDY_HEIGHT);
@@ -274,7 +277,7 @@ public class MascotController {
         return view;
     }
 
-    /** Opens Focus after /focus built a plan in the chat panel. */
+    /** Opens Focus after the chat focus option built a plan. */
     private void openFocusPanel() {
         openPanel(Panel.FOCUS);
         if (focusController != null) {

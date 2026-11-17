@@ -113,6 +113,16 @@ public final class FocusService {
         }
     }
 
+    /**
+     * Imports planner documents and lets the model decide each task's focus
+     * type. Deep-focus signals such as importance, difficulty or low confidence
+     * are handled in the extraction prompt.
+     */
+    public FocusPlan importDocuments(List<DocumentAttachment> documents)
+            throws FocusPlanningException {
+        return importDocuments(documents, null);
+    }
+
     /** Rebuilds the plan from the classes, tasks and preferences already loaded. */
     public synchronized FocusPlan generatePlan() {
         plan = buildPlan(List.of());

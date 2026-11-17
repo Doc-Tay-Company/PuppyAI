@@ -181,8 +181,14 @@ final class FocusJsonParser {
             }
             Priority priority = FocusFormats.parsePriority(
                     text(node, "priority", "importance"), Priority.MEDIUM);
-            tasks.add(new StudyTask(subject, "Review class notes", FocusType.QUICK,
-                    50, today.plusDays(7), priority));
+            FocusType type = node.isObject()
+                    ? FocusFormats.parseType(
+                            text(node, "type", "sessionType", "kind", "focus", "note", "description"),
+                            FocusType.QUICK)
+                    : FocusType.QUICK;
+            int minutes = type == FocusType.DEEP ? 60 : 50;
+            tasks.add(new StudyTask(subject, "Review class notes", type,
+                    minutes, today.plusDays(7), priority));
         }
         if (!tasks.isEmpty()) {
             notes.add("No tasks were listed, so I added a review session for each subject.");

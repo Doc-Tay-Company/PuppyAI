@@ -150,6 +150,26 @@ class FocusJsonParserTest {
     }
 
     @Test
+    void marksAnImportantSubjectOnlyDescriptionAsDeep() throws Exception {
+        String reply = """
+                {"subjects": [
+                  {"subject": "Math", "type": "DEEP"},
+                  "Physics"
+                ]}
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertEquals(2, extraction.input().tasks().size());
+        StudyTask deep = extraction.input().tasks().get(0);
+        StudyTask quick = extraction.input().tasks().get(1);
+        assertEquals(FocusType.DEEP, deep.type());
+        assertEquals(60, deep.estimatedMinutes());
+        assertEquals(FocusType.QUICK, quick.type());
+        assertEquals(50, quick.estimatedMinutes());
+    }
+
+    @Test
     void rejectsEmptyNonJsonAndEmptyPlans() {
         assertThrows(FocusPlanningException.class, () -> parser.parse("", TODAY));
         assertThrows(FocusPlanningException.class,

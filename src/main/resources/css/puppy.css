@@ -347,6 +347,25 @@
     -fx-padding: 9 11;
 }
 
+.composer-icon-button {
+    -fx-font-family: "Segoe UI Emoji";
+    -fx-font-size: 14px;
+    -fx-padding: 5 7;
+}
+
+.composer-mode {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 10;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
+    -fx-font-size: 12px;
+}
+
+.composer-mode .list-cell {
+    -fx-font-size: 12px;
+    -fx-text-fill: #4a2d1d;
+}
+
 .history-pane,
 .settings-section,
 .timer-card,

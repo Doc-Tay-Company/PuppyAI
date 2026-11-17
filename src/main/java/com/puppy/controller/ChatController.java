@@ -2,12 +2,12 @@ package com.puppy.controller;
 
 import com.puppy.ai.OllamaException;
 import com.puppy.document.DocumentExtractionException;
-import com.puppy.enums.FocusType;
 import com.puppy.enums.MascotState;
 import com.puppy.enums.MessageRole;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
 import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.service.ChatService;
 import com.puppy.service.FocusFormats;
@@ -23,6 +23,7 @@ import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
@@ -45,6 +46,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -59,6 +61,32 @@ import java.util.function.BooleanSupplier;
  * the current conversation context.</p>
  */
 public class ChatController {
+
+    /** What the composer option does when Send is pressed. */
+    enum ComposerMode {
+        CHAT("Chat"),
+        FOCUS("Focus plan"),
+        MODEL("Model"),
+        HELP("Help");
+
+        private final String label;
+
+        ComposerMode(String label) {
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    /**
+     * A focus request waiting for the user's free-time window. The typed
+     * description is kept so the plan can start as soon as the window arrives.
+     */
+    private record PendingFocus(String description) {
+    }
 
     private static final int MAX_ATTACHMENTS = 5;
     private static final double BUBBLE_MAX_WIDTH = 640;
@@ -83,6 +111,9 @@ public class ChatController {
 
     @FXML
     private Button attachButton;
+
+    @FXML
+    private ComboBox<ComposerMode> modeChoice;
 
     @FXML
     private ScrollPane messageScroll;
@@ -122,6 +153,7 @@ public class ChatController {
     private volatile int responseGeneration;
     private int attachmentGeneration;
     private Future<?> inFlight;
+    private PendingFocus pendingFocus;
 
     private final StringBuilder pendingTokens = new StringBuilder();
     private final StringBuilder streamingText = new StringBuilder();
@@ -136,6 +168,10 @@ public class ChatController {
     @FXML
     public void initialize() {
         loadChatMascot();
+        modeChoice.getItems().setAll(ComposerMode.values());
+        modeChoice.setValue(ComposerMode.CHAT);
+        modeChoice.setTooltip(new Tooltip("Choose what Send should do"));
+        attachButton.setTooltip(new Tooltip("Attach a document"));
         streamTicker = new Timeline(new KeyFrame(STREAM_TICK, event -> flushPendingTokens()));
         streamTicker.setCycleCount(Timeline.INDEFINITE);
         updateComposerState();
@@ -191,22 +227,55 @@ public class ChatController {
             return;
         }
 
+        ComposerMode mode = modeChoice.getValue() == null
+                ? ComposerMode.CHAT : modeChoice.getValue();
         String raw = messageInput.getText();
         String message = raw == null ? "" : raw.strip();
-        if (message.isEmpty() && attachments.isEmpty()) {
+        boolean action = mode != ComposerMode.CHAT;
+        if (message.isEmpty() && attachments.isEmpty() && !action) {
             return;
-        }
-        if (message.isEmpty()) {
-            message = ATTACHMENT_ONLY_PROMPT;
         }
 
         messageInput.clear();
         stopMascotReaction();
-        if (handleLocalCommand(message)) {
+
+        if (pendingFocus != null && mode == ComposerMode.CHAT && !message.isEmpty()
+                && !message.startsWith("/")) {
+            answerPendingFocus(message);
+            resetComposerMode();
             messageInput.requestFocus();
             return;
         }
 
+        switch (mode) {
+            case FOCUS -> {
+                if (startFocus(message)) {
+                    resetComposerMode();
+                }
+                messageInput.requestFocus();
+            }
+            case MODEL -> {
+                answerLocalCommand(ComposerMode.MODEL, modelCommandReply());
+                resetComposerMode();
+                messageInput.requestFocus();
+            }
+            case HELP -> {
+                answerLocalCommand(ComposerMode.HELP, helpReply());
+                resetComposerMode();
+                messageInput.requestFocus();
+            }
+            case CHAT -> {
+                String chatMessage = message.isEmpty() ? ATTACHMENT_ONLY_PROMPT : message;
+                if (handleLocalCommand(chatMessage)) {
+                    messageInput.requestFocus();
+                    return;
+                }
+                sendChat(chatMessage);
+            }
+        }
+    }
+
+    private void sendChat(String message) {
         List<String> fileNames = attachments.stream()
                 .map(DocumentAttachment::fileName)
                 .toList();
@@ -240,6 +309,22 @@ public class ChatController {
         }
     }
 
+    private void answerLocalCommand(ComposerMode mode, String reply) {
+        addMessage("user", mode.toString(), List.of());
+        addMessage("assistant", reply, List.of());
+        if (mascotStateService.getState() == MascotState.THINKING
+                || mascotStateService.getState() == MascotState.TALKING) {
+            mascotStateService.resetToIdle();
+        }
+        scrollToBottom();
+    }
+
+    private void resetComposerMode() {
+        if (modeChoice != null) {
+            modeChoice.setValue(ComposerMode.CHAT);
+        }
+    }
+
     /**
      * Handles slash commands before a request reaches Ollama. The command output
      * is a normal assistant message, so it stays in the session history.
@@ -257,16 +342,9 @@ public class ChatController {
         }
         String reply = switch (command) {
             case "/model" -> modelCommandReply();
-            case "/help" -> """
-                    **Puppy commands**
-
-                    - `/focus` - read attached timetable/subject files and build focus sessions
-                    - `/focus quick` or `/focus deep` - force one focus session type
-                    - `/model` - show the local model and server
-                    - `/help` - show this command list
-
-                    Everything else is sent to the local model.""";
-            default -> "I don't know `" + input.strip() + "` yet. Try `/focus`, `/model` or `/help`.";
+            case "/help" -> helpReply();
+            default -> "I don't know `" + input.strip()
+                    + "` yet. Choose an option next to the message box, or try Chat.";
         };
 
         addMessage("user", input, List.of());
@@ -279,55 +357,147 @@ public class ChatController {
         return true;
     }
 
+    private static String helpReply() {
+        return """
+                **Puppy options**
+
+                Choose an option next to the message box, then press Send.
+
+                - **Focus plan** - read your pinned files or typed subject description
+                - **Model** - show the local model and server
+                - **Help** - show this list
+
+                **Chat** sends everything else to the local model.
+
+                Puppy chooses **Quick** or **Deep** focus from your description: subjects
+                that are important, difficult or need more time become Deep focus.""";
+    }
+
     /**
-     * {@code /focus} turns attached files into a plan through the local model.
-     * It runs like a normal reply, so closing the panel or cancelling the
-     * conversation also cancels the extraction.
+     * Slash-command entry point kept for keyboard users. The option next to the
+     * message box is the normal path now.
      */
     private void startFocusCommand(String input) {
-        String[] parts = input.strip().split("\\s+");
-        FocusType override = null;
-        if (parts.length > 1) {
-            String option = parts[1].toLowerCase(Locale.ROOT);
-            if (option.equals("quick")) {
-                override = FocusType.QUICK;
-            } else if (option.equals("deep")) {
-                override = FocusType.DEEP;
-            } else {
-                addMessage("user", input, List.of());
-                addMessage("assistant", """
-                        Use `/focus` on its own, or `/focus quick` / `/focus deep` to force a type.
-                        Attach your timetable or subject file in the same message.""", List.of());
-                scrollToBottom();
-                return;
-            }
+        String description = input.strip().substring("/focus".length()).strip();
+        if (description.equalsIgnoreCase("quick") || description.equalsIgnoreCase("deep")) {
+            addMessage("user", input, List.of());
+            addMessage("assistant", """
+                    Puppy now chooses **Quick** or **Deep** from your description, so there is
+                    no type to force. Tell me how the subject feels and which times you are free,
+                    for example **18:00-21:30**.""", List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return;
+        }
+        startFocus(description);
+    }
+
+    /**
+     * Starts a focus request from the pinned files and an optional typed
+     * description. Puppy infers Quick or Deep focus from that description.
+     *
+     * <p>The planner only runs once a free-time window is known. The window is
+     * parsed from the typed description, never from a pinned timetable, because
+     * class times are not free time. When no range is present, Puppy keeps the
+     * request pending and asks for the window before opening Focus Planner.</p>
+     *
+     * @return {@code true} when the request was accepted
+     */
+    private boolean startFocus(String description) {
+        String typed = description == null ? "" : description.strip();
+        if (typed.isEmpty() && attachments.isEmpty()) {
+            addMessage("user", "Focus plan", List.of());
+            addMessage("assistant", focusHelpText(), List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return false;
+        }
+        if (focusService == null) {
+            addMessage("user", typed.isEmpty() ? "Focus plan" : typed, List.of());
+            addMessage("assistant",
+                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+            scrollToBottom();
+            return false;
         }
 
         List<String> fileNames = attachments.stream()
                 .map(DocumentAttachment::fileName)
                 .toList();
-        addMessage("user", input, fileNames);
+        addMessage("user", typed.isEmpty() ? "Focus plan" : typed, fileNames);
 
-        if (attachments.isEmpty()) {
-            addMessage("assistant", """
-                    **Focus needs one file**
+        Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(typed);
+        if (window.isPresent()) {
+            applyFreeTime(window.get());
+            return startFocusDocuments(typed);
+        }
 
-                    Attach your timetable, subject list or assignment sheet, then send `/focus`.
-                    Supported files: PDF, DOCX, DOC, TXT and MD. You can also build the plan by
-                    hand in **Focus Planner**.
+        pendingFocus = new PendingFocus(typed);
+        addMessage("assistant", freeTimeQuestion(), List.of());
+        scrollToBottom();
+        mascotStateService.resetToIdle();
+        return true;
+    }
 
-                    - `/focus` - plan every task from the files
-                    - `/focus quick` - force quick-focus sessions
-                    - `/focus deep` - force deep-focus sessions""", List.of());
+    /**
+     * Handles the reply to {@link #freeTimeQuestion()}: parse a range, save it
+     * as the planner's free time, then continue with the pending request.
+     */
+    private void answerPendingFocus(String message) {
+        if (pendingFocus == null) {
+            return;
+        }
+        if (isCancelReply(message)) {
+            pendingFocus = null;
+            addMessage("user", message, List.of());
+            addMessage("assistant",
+                    "Okay, I cancelled that focus plan. Send a new description whenever you're ready.",
+                    List.of());
             scrollToBottom();
             mascotStateService.resetToIdle();
             return;
         }
-        if (focusService == null) {
-            addMessage("assistant",
-                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+
+        Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(message);
+        if (window.isEmpty()) {
+            addMessage("user", message, List.of());
+            addMessage("assistant", freeTimeRetry(), List.of());
             scrollToBottom();
+            mascotStateService.resetToIdle();
             return;
+        }
+
+        PendingFocus pending = pendingFocus;
+        pendingFocus = null;
+        addMessage("user", message, List.of());
+        applyFreeTime(window.get());
+        startFocusDocuments(pending.description());
+        messageInput.requestFocus();
+    }
+
+    /** Saves the window and confirms it before the plan is built. */
+    private void applyFreeTime(FocusPreferences window) {
+        focusService.setPreferences(window);
+        addMessage("assistant", "Got it - I'll schedule inside **"
+                + FocusFormats.formatTime(window.earliest()) + " - "
+                + FocusFormats.formatTime(window.latest()) + "**.", List.of());
+    }
+
+    /**
+     * Runs extraction on the pinned files plus the typed description. The model
+     * decides Quick or Deep focus for every task.
+     */
+    private boolean startFocusDocuments(String description) {
+        List<DocumentAttachment> requestAttachments = new ArrayList<>(attachments);
+        String typed = description == null ? "" : description.strip();
+        if (!typed.isEmpty()) {
+            requestAttachments.add(new DocumentAttachment(
+                    Path.of("focus-request.txt"), typed, 0, false));
+        }
+        if (requestAttachments.isEmpty()) {
+            addMessage("assistant", focusHelpText(), List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return false;
         }
 
         responding = true;
@@ -337,12 +507,11 @@ public class ChatController {
         mascotStateService.setState(MascotState.THINKING);
 
         int generation = ++responseGeneration;
-        List<DocumentAttachment> requestAttachments = List.copyOf(attachments);
-        FocusType requestedType = override;
+        List<DocumentAttachment> requestDocuments = List.copyOf(requestAttachments);
         try {
             inFlight = executor.submit(() -> {
                 try {
-                    FocusPlan plan = focusService.importDocuments(requestAttachments, requestedType);
+                    FocusPlan plan = focusService.importDocuments(requestDocuments);
                     Platform.runLater(() -> completeFocusCommand(generation, plan));
                 } catch (FocusPlanningException e) {
                     String message = e.getMessage() == null || e.getMessage().isBlank()
@@ -366,7 +535,47 @@ public class ChatController {
                     "I couldn't start the planner because the application is shutting down.",
                     List.of());
             mascotStateService.resetToIdle();
+            return false;
         }
+        return true;
+    }
+
+    private static boolean isCancelReply(String message) {
+        String key = message.toLowerCase(Locale.ROOT).strip();
+        return key.equals("cancel") || key.equals("huy") || key.equals("hủy")
+                || key.equals("huỷ") || key.equals("thoi") || key.equals("thôi")
+                || key.equals("skip") || key.startsWith("khong can")
+                || key.startsWith("không cần");
+    }
+
+    private static String freeTimeQuestion() {
+        return """
+                **When are you free?**
+
+                Tell me a start and end time for your study window, for example
+                **18:00-21:30**, **7h-9h** or **7pm-9pm**. I'll fit the plan inside it and
+                avoid your classes.""";
+    }
+
+    private static String freeTimeRetry() {
+        return """
+                I couldn't find a start and end time. Reply with a window such as
+                **18:00-21:30**, **7h-9h** or **7pm-9pm**, or say **cancel**.""";
+    }
+
+    private static String focusHelpText() {
+        return """
+                **Focus needs a file or a description**
+
+                Pin your timetable, subject list or assignment sheet with the 📌 button, or type
+                the subjects you want planned. Then choose **Focus plan** and press Send.
+
+                Tell me how the subject feels - important, difficult, or not fully mastered -
+                and I'll book longer Deep focus sessions. Light review and reading stay Quick.
+                If you don't mention a free-time window, I'll ask for one before planning.
+
+                Supported files: PDF, DOCX, DOC, TXT and MD. You can also build the plan by
+                hand in **Focus Planner**.""";
     }
 
     private void completeFocusCommand(int generation, FocusPlan plan) {
@@ -450,7 +659,7 @@ public class ChatController {
         }
         return "**Model:** `" + chatService.modelName() + "`\n\n"
                 + "**Server:** " + chatService.baseUrl() + "\n\n"
-                + "I run locally through Ollama. Type `/help` for other commands.";
+                + "I run locally through Ollama.";
     }
 
     private void streamReply(int generation, List<ChatMessage> conversation,
@@ -804,6 +1013,7 @@ public class ChatController {
         boolean busy = responding || extracting;
         sendButton.setDisable(busy);
         attachButton.setDisable(busy);
+        modeChoice.setDisable(busy);
     }
 
     private List<ChatMessage> conversationForModel() {
@@ -839,6 +1049,7 @@ public class ChatController {
     @FXML
     private void newConversation() {
         cancelResponse();
+        pendingFocus = null;
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();
@@ -849,6 +1060,7 @@ public class ChatController {
         attachments.clear();
         updateAttachmentBar();
         hideAttachmentStatus();
+        resetComposerMode();
         addMessage("assistant", greeting(), List.of());
         refreshHistory();
         scrollToBottom();
@@ -879,6 +1091,7 @@ public class ChatController {
             return;
         }
         cancelResponse();
+        pendingFocus = null;
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();
@@ -893,6 +1106,7 @@ public class ChatController {
         attachments.addAll(conversation.attachments());
         updateAttachmentBar();
         hideAttachmentStatus();
+        resetComposerMode();
         renderMessages();
         refreshHistory();
         updateComposerState();
@@ -1019,7 +1233,7 @@ public class ChatController {
 
     private String greeting() {
         return chatService == null
-                ? "Hi! I'm Puppy. Attach a PDF or Word document and let's read it together."
+                ? "Hi! I'm Puppy, your desktop companion. Ask me anything."
                 : chatService.greeting();
     }
 

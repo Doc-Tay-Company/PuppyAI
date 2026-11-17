@@ -72,7 +72,7 @@ public final class ServiceRegistry implements AutoCloseable {
         return chatService;
     }
 
-    /** In-memory Focus planner shared by the Focus panel and the /focus chat command. */
+    /** In-memory Focus planner shared by the Focus panel and the chat focus option. */
     public FocusService focusService() {
         return focusService;
     }

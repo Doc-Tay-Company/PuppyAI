@@ -14,6 +14,7 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.input.KeyCode;
@@ -178,15 +179,38 @@ class FxmlLayoutTest {
                 shell.layout();
                 VBox messages = (VBox) shell.lookup("#messagesBox");
                 TextField messageInput = (TextField) shell.lookup("#messageInput");
+                @SuppressWarnings("unchecked")
+                ComboBox<ChatController.ComposerMode> modeChoice =
+                        (ComboBox<ChatController.ComposerMode>) shell.lookup("#modeChoice");
+                assertEquals("Ask me anything", messageInput.getPromptText(),
+                        "The chat box prompt should only invite a question");
+                assertEquals("📌", ((Button) shell.lookup("#attachButton")).getText(),
+                        "The attachment control should use a pin icon");
+                assertEquals(List.of("Chat", "Focus plan", "Model", "Help"),
+                        modeChoice.getItems().stream().map(Object::toString).toList(),
+                        "Plain chat and Focus plan should be the only conversation options");
+                assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
+                        "Chat should be the default composer option");
                 int messageCount = messages.getChildren().size();
                 messageInput.setText("   ");
                 ((Button) shell.lookup("#sendButton")).fire();
                 assertEquals(messageCount, messages.getChildren().size(),
                         "Blank chat input must not add a message");
-                messageInput.setText("/model");
+                messageInput.clear();
+                modeChoice.setValue(ChatController.ComposerMode.MODEL);
                 ((Button) shell.lookup("#sendButton")).fire();
                 assertEquals(messageCount + 2, messages.getChildren().size(),
-                        "/model should answer locally without contacting Ollama");
+                        "The Model option should answer locally without contacting Ollama");
+                assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
+                        "The composer option should return to Chat after running");
+                int afterModel = messages.getChildren().size();
+                messageInput.setText("Math is important and I need more time");
+                modeChoice.setValue(ChatController.ComposerMode.FOCUS);
+                ((Button) shell.lookup("#sendButton")).fire();
+                assertEquals(afterModel + 2, messages.getChildren().size(),
+                        "Focus without a time window should ask when the user is free");
+                assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
+                        "Asking for free time should return the composer to Chat");
                 closeActivePanel(shell, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());

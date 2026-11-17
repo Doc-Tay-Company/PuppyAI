@@ -79,7 +79,7 @@
 
                     <Tab text="Tasks">
                         <VBox styleClass="focus-tab-content" spacing="6">
-                            <Label text="Quick focus covers review and reading. Deep focus covers programming, assignments and research."
+                            <Label text="Quick focus covers light review and reading. Deep focus covers important or difficult work, low confidence, programming, assignments and research."
                                    styleClass="muted-copy" wrapText="true"/>
                             <TextField fx:id="taskSubject" promptText="Subject"/>
                             <TextField fx:id="taskTitle" promptText="Task or assignment"/>

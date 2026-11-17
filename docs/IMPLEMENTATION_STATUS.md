@@ -104,11 +104,14 @@ Last updated: 2026-11-16
   session. Streaming tokens update a single label on an 80 ms UI ticker; the
   session snapshot is updated when a message completes or the user switches
   conversations, avoiding a full history copy per token.
-- **Commands:** `/model` reports the exact local model and Ollama server;
-  `/help` lists commands. `/focus` builds a plan from attached files. The
-  new-chat greeting no longer names the model.
-- **Tests:** `MascotMessagesTest`, Markdown rendering and `/model` assertions in
-  `FxmlLayoutTest`, and the updated greeting contract in `ChatServiceTest`.
+- **Commands:** an option beside the message box replaces typed slash commands:
+  **Chat**, **Focus plan**, **Model** and **Help**. Model and Help answer
+  locally. The 📌 button attaches documents, and the new-chat greeting ends at
+  “Ask me anything.” Focus has no Quick/Deep selector; Puppy infers the type
+  from the description and asks for a free-time window when one is missing.
+- **Tests:** `MascotMessagesTest`, Markdown rendering and composer-option
+  assertions in `FxmlLayoutTest`, and the updated greeting contract in
+  `ChatServiceTest`.
 
 ## Completed (Focus planner)
 
@@ -125,12 +128,15 @@ Last updated: 2026-11-16
 - **Block sizing:** long tasks are split into equal blocks rather than one full
   block plus a remainder; a 120-minute deep task becomes 3 × 40 minutes.
 - **Tolerant parsing:** `FocusFormats` reads `18:00`, `6h30`, `6h30 chieu`,
-  ISO and `20/11/2026` dates, English/Vietnamese weekdays, Quick/Deep keywords,
-  priorities and durations such as `1h30`, `1.5h` and `45 phút`.
+  ISO and `20/11/2026` dates, English/Vietnamese weekdays, Quick/Deep keywords
+  (including importance, difficulty, extra time and low confidence → Deep),
+  priorities, durations such as `1h30`, `1.5h` and `45 phút`, and free-time
+  windows such as `18:00-21:30`, `7h tối - 9h tối` and `7pm-9pm`. Date-like
+  number pairs are rejected so a deadline cannot become a study window.
 - **Model extraction:** `OllamaFocusPlanExtractor` asks the local model for
   strict JSON via the new `OllamaClient.jsonChat` (`format: json`, low
   temperature). `FocusJsonParser` accepts fenced/prefaced JSON, skips invalid
-  rows with notes, and creates review tasks when a file lists only subjects.
+  rows with notes, and creates review tasks when the text lists only subjects.
 - **Application service:** `FocusService` owns classes, tasks, preferences and
   the current plan; it merges imports, deduplicates facts, adds the timetable
   review fallback, validates hand-made and edited sessions, and
@@ -143,10 +149,14 @@ Last updated: 2026-11-16
   has an **Edit** action that opens the Session tab, and saving re-validates
   free time, classes and same-day session overlaps while preserving completion;
   **Cancel edit** restores the add-session form.
-- **Chat command:** `/focus` requires attachments, runs extraction on the shared
-  worker pool, replies with a Markdown plan summary and opens Focus Planner.
-  `/focus quick` and `/focus deep` force the session type. `/help` and the chat
-  placeholder were updated.
+- **Chat focus option:** **Focus plan** accepts pinned files or a typed subject
+  description, infers Quick/Deep from the description, runs extraction on the
+  shared worker pool, replies with a Markdown plan summary and opens Focus
+  Planner. When the description has no free-time window, Puppy stores the request,
+  asks “When are you free?”, parses the reply into `FocusPreferences`, and then
+  builds the plan. Timetable class times are not treated as free time. Slash
+  commands remain a keyboard fallback, and the composer placeholder is “Ask me
+  anything”.
 - **Navigation:** a Focus button in the main menu and a Focus planner item in
   More; the Focus panel is cached, monitor-aware (980 × 840 preferred, clamped
   to the screen), and a running Focus timer blocks the idle sleep timer.
@@ -154,18 +164,19 @@ Last updated: 2026-11-16
   (`styleClass="panel-card, focus-panel"`); space-separated values were parsed as
   one CSS class, so panel styling had not been applied.
 - **Tests:** `FocusPlannerTest` (class/free-time conflicts, deadlines, subject
-  fairness, per-day caps, block sizes, warnings), `FocusJsonParserTest`
-  (strict/fenced/Vietnamese input, invalid rows, subject fallback) and
-  `FocusServiceTest` (merge, override, review fallback, manual validation,
-  session editing and completion). `OllamaClientTest` now checks JSON-mode
-  requests, and `FxmlLayoutTest` opens the Focus panel.
+  fairness, per-day caps, block sizes, warnings), `FocusFormatsTest` (time,
+  date, type, priority, duration and free-time-window parsing),
+  `FocusJsonParserTest` (strict/fenced/Vietnamese input, invalid rows, subject
+  fallback) and `FocusServiceTest` (merge, override, review fallback, manual
+  validation, session editing and completion). `OllamaClientTest` now checks
+  JSON-mode requests, and `FxmlLayoutTest` opens the Focus panel.
 
 ## Services used by the UI
 
 | Class | How the UI should use it |
 | --- | --- |
 | `ChatService` | `ChatController` gets it from `ServiceRegistry`, streams replies with `reply(...)`, and reads attachments with `readDocument(...)`. |
-| `FocusService` | `FocusController` gets it from `ServiceRegistry`; `/focus` calls `importDocuments(...)` on the worker pool. Shares classes, tasks, preferences, plan and session state with the panel. |
+| `FocusService` | `FocusController` gets it from `ServiceRegistry`; the Chat focus option calls `importDocuments(...)` on the worker pool. Shares classes, tasks, preferences, plan and session state with the panel. |
 | `FocusPlanner` | Pure-Java scheduling owned by `FocusService`; the UI never makes placement decisions. |
 | `FocusPlanExtractor` | Infrastructure behind `FocusService`; `OllamaFocusPlanExtractor` reads files, while tests use a fake extractor. |
 | `DocumentTextExtractor` | Used through `ChatService.readDocument(...)` and `FocusService.importFromFiles(...)`; never called from the JavaFX thread. |

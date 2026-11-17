@@ -2,6 +2,7 @@ package com.puppy.service;
 
 import com.puppy.enums.FocusType;
 import com.puppy.enums.Priority;
+import com.puppy.model.FocusPreferences;
 
 import java.text.Normalizer;
 import java.time.DayOfWeek;
@@ -10,6 +11,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -21,10 +23,23 @@ import java.util.regex.Pattern;
 public final class FocusFormats {
 
     private static final Pattern CLOCK = Pattern.compile(
-            "^(\\d{1,2})\\s*[:h.,]\\s*(\\d{2})\\s*(am|pm|sa|ch|chieu|sang)?$",
+            "^(\\d{1,2})\\s*(?::|h|gio|g|[,.])\\s*(\\d{2})\\s*(am|pm|sa|ch|chieu|sang|trua|toi)?$",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern HOUR_ONLY = Pattern.compile(
-            "^(\\d{1,2})\\s*(am|pm|sa|ch|chieu|sang)?$", Pattern.CASE_INSENSITIVE);
+            "^(\\d{1,2})\\s*(?:h|gio|g)?\\s*(am|pm|sa|ch|chieu|sang|trua|toi)?$",
+            Pattern.CASE_INSENSITIVE);
+    private static final String TIME_TOKEN =
+            "\\d{1,2}(?:\\s*(?::|h|gio|g|[,.])\\s*(?:\\d{2})?)?"
+                    + "\\s*(?:am|pm|sa|ch|chieu|sang|trua|toi)?";
+    private static final Pattern TIME_RANGE = Pattern.compile(
+            "(?<![\\d-])(" + TIME_TOKEN + ")\\s*(?:-|–|—|den|toi|to)\\s*("
+                    + TIME_TOKEN + ")(?!\\s*-\\s*\\d)",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern TIME_SUFFIX = Pattern.compile(
+            "(?:am|pm|sa|ch|chieu|sang|trua|toi)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern AFTERNOON_SUFFIX = Pattern.compile(
+            "(pm|chieu|trua|toi)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DEEP_WORD = Pattern.compile("\\b(?:kho|hard|difficult)\\b");
     private static final Pattern HOURS_DURATION = Pattern.compile(
             "^(\\d+(?:\\.\\d+)?)(?:hours|hour|hrs|hr|h|gio|g)(\\d{1,2})?"
                     + "(?:minutes|minute|mins|min|phut|p|m)?$");
@@ -68,7 +83,8 @@ public final class FocusFormats {
         if (suffix != null) {
             String normalized = normalize(suffix);
             boolean afternoon = normalized.equals("pm") || normalized.equals("ch")
-                    || normalized.equals("chieu");
+                    || normalized.equals("chieu") || normalized.equals("trua")
+                    || normalized.equals("toi");
             if (afternoon && hour < 12) {
                 hour += 12;
             } else if (!afternoon && hour == 12) {
@@ -79,6 +95,67 @@ public final class FocusFormats {
             throw new IllegalArgumentException("Enter a time between 00:00 and 23:59");
         }
         return LocalTime.of(hour, minute);
+    }
+
+    /**
+     * Finds a free-time window in a typed sentence, for example
+     * {@code 18:00-21:30}, {@code 7h-9h}, {@code 7h tối đến 9h tối} or
+     * {@code 7pm to 9pm}. Only ranges are accepted; a single time such as
+     * "after 8pm" returns empty so Chat can ask for the end of the window.
+     *
+     * @return the parsed window, or empty when the text has no usable range
+     */
+    public static Optional<FocusPreferences> parseFreeTimeWindow(String value) {
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+        String text = normalize(value).replace('\u00a0', ' ').replaceAll("\\s+", " ");
+        if (isAnyTime(text)) {
+            return Optional.of(FocusPreferences.defaults());
+        }
+
+        Matcher matcher = TIME_RANGE.matcher(text);
+        while (matcher.find()) {
+            String startText = matcher.group(1).strip();
+            String endText = matcher.group(2).strip();
+            try {
+                LocalTime start = parseTime(startText);
+                LocalTime end = parseTime(endText);
+                if (AFTERNOON_SUFFIX.matcher(endText).find()
+                        && !TIME_SUFFIX.matcher(startText).find()
+                        && start.isBefore(LocalTime.NOON)) {
+                    LocalTime afternoonStart = start.plusHours(12);
+                    if (afternoonStart.isBefore(end)) {
+                        start = afternoonStart;
+                    }
+                }
+                if (AFTERNOON_SUFFIX.matcher(startText).find()
+                        && !TIME_SUFFIX.matcher(endText).find()
+                        && end.isBefore(LocalTime.NOON)) {
+                    LocalTime eveningEnd = end.plusHours(12);
+                    if (start.isBefore(eveningEnd)) {
+                        end = eveningEnd;
+                    }
+                }
+                if (start.isBefore(end)) {
+                    return Optional.of(new FocusPreferences(start, end));
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Try the next range in the sentence.
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isAnyTime(String normalized) {
+        if (normalized.startsWith("khong") || normalized.contains("khong ranh")) {
+            return false;
+        }
+        return normalized.contains("anytime")
+                || normalized.contains("any time")
+                || normalized.contains("bat cu luc nao")
+                || normalized.contains("khi nao cung duoc")
+                || normalized.contains("ca ngay");
     }
 
     /** Parses ISO dates plus the Vietnamese-style {@code 20/11/2026}. */
@@ -129,7 +206,15 @@ public final class FocusFormats {
         }
         if (key.contains("deep") || key.contains("assignment") || key.contains("coding")
                 || key.contains("program") || key.contains("research") || key.contains("project")
-                || key.contains("lab") || key.contains("essay")) {
+                || key.contains("lab") || key.contains("essay") || key.contains("important")
+                || key.contains("quan trong") || key.contains("more time")
+                || key.contains("nhieu thoi gian") || key.contains("difficult")
+                || key.contains("hard") || key.contains("kho hieu") || key.contains("kho lam")
+                || key.contains("not confident") || key.contains("chua nam chac")
+                || key.contains("chua tu tin") || key.contains("khong tu tin")
+                || key.contains("not mastered") || key.contains("chua hieu")
+                || key.contains("chua vung") || key.contains("mat goc")
+                || DEEP_WORD.matcher(key).find()) {
             return FocusType.DEEP;
         }
         if (key.contains("quick") || key.contains("review") || key.contains("read")

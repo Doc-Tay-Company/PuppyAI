@@ -9,12 +9,14 @@ frameless, transparent, always-on-top puppy. Click the puppy for a random
 message, double-click to open Study / Focus / Chat / More, and the shell expands
 around the mascot while keeping its screen anchor. After five idle minutes the
 puppy falls asleep; click it to wake it up. Chat streams Markdown replies from
-the local model through **Ollama**, supports `/model`, `/help` and `/focus`, and
-can read attached PDF, Word and text files into the conversation. `/focus` reads
-an attached timetable or subject file and builds a constraint-aware study plan,
-while the Focus Planner panel supports hand-made classes, tasks and sessions.
-Chat, focus data and attachments are session-only; cloud AI and persistence are
-future work.
+the local model through **Ollama**, offers **Focus plan / Model / Help** next to
+the message box, and can read pinned PDF, Word and text files into the
+conversation. Focus planning reads a pinned timetable or subject file, or a
+typed subject description, infers Quick or Deep focus from how you describe the
+subject, asks for your free-time window when it is missing, and builds a
+constraint-aware study plan while the Focus Planner panel supports hand-made
+classes, tasks and sessions. Chat, focus data and attachments are session-only;
+cloud AI and persistence are future work.
 
 ## Requirements
 
@@ -83,10 +85,9 @@ mvn javafx:run        # launch Puppy
 | Study / Focus / Chat | Open the matching panel above the puppy; Menu returns to the main menu |
 | Menu (inside a panel) | Go back to the Study / Focus / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
-| Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
-| `/model` | Show the exact local model and Ollama server in the chat |
-| `/focus` | Read attached timetable/subject files and build a study plan |
-| `/focus quick` / `/focus deep` | Build the plan and force every session to one focus type |
+| Composer option (Chat) | Choose Chat, Focus plan, Model or Help |
+| 📌 (Chat) | Pin a PDF, Word document, TXT or Markdown file to the current chat |
+| Focus plan | Read pinned files or a typed subject description, ask for free time if needed, and build a study plan |
 | More | Open Focus Planner, Settings, session chat history, Help / About, collapse, or quit |
 | Escape | Close the current panel/menu and return to the puppy |
 | Right-click | Development menu: switch mascot states or quit |
@@ -218,27 +219,34 @@ Planned packages from the implementation plan (`repository/`, `database/`,
 
 ## Focus mode
 
-Focus has two entry points: `/focus` in Chat with a timetable, subject list or
-assignment sheet attached, and the Focus Planner panel from the main menu or
-More. Both share one in-memory `FocusService`, so a plan built in chat is
-immediately visible in the panel.
+Focus has two entry points: the **Focus plan** composer option in Chat with
+pinned files or a typed subject description, and the Focus Planner panel from
+the main menu or More. Both share one in-memory `FocusService`, so a plan built
+in chat is immediately visible in the panel.
 
 ### How a plan is built
 
-1. Puppy extracts text from up to five attached PDF, DOCX, DOC, TXT or Markdown
-   files (20 MB each).
-2. The local Ollama model reads that text and returns strict JSON classes and
-   tasks. It only extracts facts; it does not choose study times.
-3. `FocusPlanner` deterministically places blocks using the rules below.
-4. The plan is summarized in chat and Focus Planner opens automatically when
+1. Puppy extracts text from up to five pinned PDF, DOCX, DOC, TXT or Markdown
+   files (20 MB each), plus any subject description typed in the chat box.
+2. The local Ollama model reads that text and returns strict JSON classes,
+   tasks and subjects. It only extracts facts; it does not choose study times.
+3. If the typed description has no free-time window, Puppy asks for one before
+   planning. Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or
+   `7pm-9pm` are accepted; the answer becomes the Focus free-time setting.
+   Timetable class times are never mistaken for free time.
+4. `FocusPlanner` deterministically places blocks using the rules below.
+5. The plan is summarized in chat and Focus Planner opens automatically when
    sessions were created.
 
 ### Session types
 
+Puppy chooses the type from your description; there is no Quick/Deep selector
+in Chat.
+
 | Type | Default block | Use for |
 | --- | --- | --- |
-| Quick focus | 25 min | Lecture review, reading and notes |
-| Deep focus | 50 min | Programming, assignments and research |
+| Quick focus | 25 min | Light lecture review, reading, notes and flashcards |
+| Deep focus | 50 min | Important or difficult subjects, low confidence, programming, assignments and research |
 
 A task longer than its default block is split into equal blocks — a
 120-minute deep task becomes three 40-minute sessions, not 50 + 50 + 20. Every
@@ -260,8 +268,13 @@ it is not shown or chosen in the UI.
 
 ### Import and manual editing
 
-- `/focus` schedules every task found in the files. `/focus quick` or
-  `/focus deep` forces every task in the plan to that type.
+- **Focus plan** schedules every task found in the pinned files or typed
+  description. Describe a subject as important, difficult, needing more time, or
+  not fully mastered and Puppy schedules it as Deep focus; light review, reading
+  and notes stay Quick.
+- If the description has no start and end time, Puppy asks **"When are you
+  free?"** first and continues with the same request after the answer. Saying
+  `cancel` drops it.
 - If a timetable or subject file has no task list, Puppy adds one
   "Review class notes" quick task per subject, due in 7 days.
 - Imported classes and tasks merge with what is already loaded; exact duplicates
@@ -293,18 +306,19 @@ minimizing a panel returns to the mascot.
   attached. Assistant replies are rendered as Markdown (headings, emphasis,
   lists, quotes, code, links and tables), and completed messages keep their
   formatted layout in session history.
-- **Commands** run without sending a normal chat turn: `/model` shows the exact
-  model name and Ollama server, and `/help` lists the available commands. Both
-  answer locally. `/focus` sends the attached planner files to the local model
-  and builds the plan. The new-chat greeting intentionally does not name the
-  model.
+- **Commands and focus** use the option beside the message box instead of typing
+  slash commands. **Focus plan** reads pinned files or the typed description,
+  infers Quick or Deep focus from it, and asks for a free-time window when the
+  description has none. **Model** shows the exact model name and Ollama server,
+  and **Help** lists the options. Model and Help answer locally.
 - **Sessions** support a highlighted active conversation, a scrollable history,
   smooth switching and automatic archiving of the conversation you leave. The
   current session is copied into history only when a message completes, not on
   every streamed token.
-- **Attachments** read PDF, DOCX, legacy DOC, TXT and Markdown files locally.
-  Text is extracted with PDFBox/Apache POI, capped at 20 MB and 80,000
-  characters per file, and only the extracted text is kept in memory.
+- **Attachments** use the 📌 pin button and read PDF, DOCX, legacy DOC, TXT and
+  Markdown files locally. Text is extracted with PDFBox/Apache POI, capped at
+  20 MB and 80,000 characters per file, and only the extracted text is kept in
+  memory.
 - Up to five documents can be attached to a conversation. Their context stays
   with that conversation until the app exits; remove a chip or start a new chat
   to drop it. The prompt builder caps document context and recent history so a
