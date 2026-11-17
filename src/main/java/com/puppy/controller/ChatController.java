@@ -15,6 +15,7 @@ import com.puppy.service.FocusPlanningException;
 import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
 import com.puppy.ui.MarkdownRenderer;
+import com.puppy.util.DurationFormats;
 import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
@@ -292,10 +293,11 @@ public class ChatController {
         streamTicker.playFromStart();
         List<ChatMessage> conversation = conversationForModel();
         List<DocumentAttachment> requestAttachments = List.copyOf(attachments);
+        long startedAtNanos = System.nanoTime();
 
         try {
             inFlight = executor.submit(
-                    () -> streamReply(generation, conversation, requestAttachments));
+                    () -> streamReply(generation, conversation, requestAttachments, startedAtNanos));
         } catch (RejectedExecutionException e) {
             responding = false;
             inFlight = null;
@@ -663,11 +665,12 @@ public class ChatController {
     }
 
     private void streamReply(int generation, List<ChatMessage> conversation,
-                             List<DocumentAttachment> documents) {
+                             List<DocumentAttachment> documents, long startedAtNanos) {
         try {
             String reply = chatService.reply(conversation, documents,
                     token -> enqueueToken(generation, token));
-            Platform.runLater(() -> completeReply(generation, reply));
+            long elapsedMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+            Platform.runLater(() -> completeReply(generation, reply, elapsedMillis));
         } catch (OllamaException e) {
             if (e.reason() == OllamaException.Reason.INTERRUPTED) {
                 return;
@@ -737,7 +740,7 @@ public class ChatController {
         messageScroll.setVvalue(1.0);
     }
 
-    private void completeReply(int generation, String reply) {
+    private void completeReply(int generation, String reply, long elapsedMillis) {
         if (generation != responseGeneration || !responding) {
             return;
         }
@@ -751,15 +754,16 @@ public class ChatController {
 
         if (streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
             currentMessages.set(streamingMessageIndex,
-                    new Message("assistant", finalText, List.of()));
+                    new Message("assistant", finalText, List.of(), elapsedMillis));
             if (streamingBubble != null) {
                 renderBubbleContent(streamingBubble, finalText);
+                showCompletionTime(streamingBubble, elapsedMillis);
             }
             updateSelectedConversation();
             refreshHistoryIfSelected();
             scrollToBottom();
         } else {
-            addMessage("assistant", finalText, List.of());
+            addMessage("assistant", finalText, List.of(), elapsedMillis);
         }
 
         resetStreamingState();
@@ -1146,7 +1150,12 @@ public class ChatController {
     }
 
     private MessageBubble addMessage(String role, String text, List<String> fileNames) {
-        Message message = new Message(role, text, fileNames);
+        return addMessage(role, text, fileNames, 0L);
+    }
+
+    private MessageBubble addMessage(String role, String text, List<String> fileNames,
+                                     long elapsedMillis) {
+        Message message = new Message(role, text, fileNames, elapsedMillis);
         currentMessages.add(message);
         updateSelectedConversation();
         refreshHistoryIfSelected();
@@ -1200,6 +1209,9 @@ public class ChatController {
         column.setAlignment(user ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         column.getChildren().add(bubble);
 
+        MessageBubble handle = new MessageBubble(bubble, content, column);
+        showCompletionTime(handle, message.elapsedMillis());
+
         for (String fileName : message.attachments()) {
             Label file = new Label("Attached: " + fileName);
             file.setWrapText(true);
@@ -1212,9 +1224,23 @@ public class ChatController {
         row.setAlignment(user ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         messagesBox.getChildren().add(row);
 
-        MessageBubble handle = new MessageBubble(bubble, content);
         renderBubbleContent(handle, message.text());
         return handle;
+    }
+
+    /** Adds the small "Completed in" footer under a finished model reply. */
+    private void showCompletionTime(MessageBubble bubble, long elapsedMillis) {
+        if (bubble == null || elapsedMillis <= 0) {
+            return;
+        }
+        boolean alreadyShown = bubble.column().getChildren().stream()
+                .anyMatch(node -> node.getStyleClass().contains("message-timing"));
+        if (alreadyShown) {
+            return;
+        }
+        Label timing = new Label("Completed in: " + DurationFormats.formatElapsed(elapsedMillis));
+        timing.getStyleClass().add("message-timing");
+        bubble.column().getChildren().add(timing);
     }
 
     private void renderBubbleContent(MessageBubble bubble, String text) {
@@ -1273,15 +1299,23 @@ public class ChatController {
         }
     }
 
-    private record MessageBubble(VBox box, VBox content) {
+    private record MessageBubble(VBox box, VBox content, VBox column) {
     }
 
-    private record Message(String role, String text, List<String> attachments) {
+    private record Message(String role, String text, List<String> attachments,
+                           long elapsedMillis) {
 
         private Message {
             Objects.requireNonNull(role, "role");
             Objects.requireNonNull(text, "text");
             attachments = List.copyOf(attachments);
+            if (elapsedMillis < 0) {
+                throw new IllegalArgumentException("elapsedMillis must not be negative");
+            }
+        }
+
+        private Message(String role, String text, List<String> attachments) {
+            this(role, text, attachments, 0L);
         }
     }
 

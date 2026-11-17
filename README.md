@@ -305,7 +305,9 @@ minimizing a panel returns to the mascot.
   JavaFX Application Thread. Blank input is rejected unless a document is
   attached. Assistant replies are rendered as Markdown (headings, emphasis,
   lists, quotes, code, links and tables), and completed messages keep their
-  formatted layout in session history.
+  formatted layout in session history. Every finished model reply shows a small
+  **Completed in:** footer: seconds under a minute, minutes and seconds under an
+  hour, then hours and minutes for long generations.
 - **Commands and focus** use the option beside the message box instead of typing
   slash commands. **Focus plan** reads pinned files or the typed description,
   infers Quick or Deep focus from it, and asks for a free-time window when the

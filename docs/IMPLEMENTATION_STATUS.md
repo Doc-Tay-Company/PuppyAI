@@ -104,14 +104,18 @@ Last updated: 2026-11-16
   session. Streaming tokens update a single label on an 80 ms UI ticker; the
   session snapshot is updated when a message completes or the user switches
   conversations, avoiding a full history copy per token.
+- **Reply timing:** each finished model reply shows a small **Completed in:**
+  footer under the bubble. `DurationFormats` switches from seconds to
+  minutes/seconds to hours/minutes, and the measured time is stored with the
+  message so it survives history switches.
 - **Commands:** an option beside the message box replaces typed slash commands:
   **Chat**, **Focus plan**, **Model** and **Help**. Model and Help answer
   locally. The 📌 button attaches documents, and the new-chat greeting ends at
   “Ask me anything.” Focus has no Quick/Deep selector; Puppy infers the type
   from the description and asks for a free-time window when one is missing.
 - **Tests:** `MascotMessagesTest`, Markdown rendering and composer-option
-  assertions in `FxmlLayoutTest`, and the updated greeting contract in
-  `ChatServiceTest`.
+  assertions in `FxmlLayoutTest`, the updated greeting contract in
+  `ChatServiceTest`, and `DurationFormatsTest` for reply timing.
 
 ## Completed (Focus planner)
 

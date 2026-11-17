@@ -175,6 +175,12 @@
     -fx-border-radius: 14;
 }
 
+.message-timing {
+    -fx-font-size: 10px;
+    -fx-text-fill: #a58974;
+    -fx-padding: 0 5;
+}
+
 .user-bubble {
     -fx-background-color: #f9d9bd;
 }
