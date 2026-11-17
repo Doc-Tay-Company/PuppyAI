@@ -144,7 +144,7 @@ class FocusJsonParserTest {
         assertEquals("Math", task.subject());
         assertEquals("Review class notes", task.title());
         assertEquals(FocusType.QUICK, task.type());
-        assertEquals(TODAY.plusDays(7), task.deadline());
+        assertEquals(TODAY.plusDays(FocusPlanner.DEFAULT_HORIZON_DAYS - 1L), task.deadline());
         assertTrue(extraction.notes().stream()
                 .anyMatch(note -> note.contains("No tasks were listed")));
     }

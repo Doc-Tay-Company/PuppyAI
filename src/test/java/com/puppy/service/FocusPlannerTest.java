@@ -188,9 +188,74 @@ class FocusPlannerTest {
                 "An impossible plan should explain why: " + plan.warnings());
     }
 
+    @Test
+    void defaultsToOneWeekWhenTasksHaveNoDeadline() {
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        500, null, Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input, preferences(8, 0, 22, 0), NOW);
+
+        assertFalse(plan.sessions().isEmpty());
+        assertEquals(TODAY.plusDays(FocusPlanner.DEFAULT_HORIZON_DAYS - 1L),
+                plan.sessions().get(plan.sessions().size() - 1).date(),
+                "Without an explicit end the plan should use one week");
+        assertTrue(plan.sessions().stream()
+                        .noneMatch(session -> session.date().isAfter(TODAY.plusDays(6))),
+                "No session may land after the default horizon");
+        assertTrue(plan.warnings().stream()
+                        .anyMatch(warning -> warning.contains("could not be placed")),
+                "Work that does not fit inside one week should be reported");
+    }
+
+    @Test
+    void usesTheLatestTaskDeadlineAsTheDefaultHorizon() {
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        500, TODAY.plusDays(9), Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input, preferences(8, 0, 22, 0), NOW);
+
+        assertEquals(20, plan.sessions().size());
+        assertEquals(TODAY.plusDays(9),
+                plan.sessions().get(plan.sessions().size() - 1).date(),
+                "The latest task deadline extends the plan past one week");
+    }
+
+    @Test
+    void honorsAnExplicitPlanEndEvenWhenATaskDeadlineIsLater() {
+        LocalDate planEnd = TODAY.plusDays(2);
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        200, TODAY.plusDays(10), Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input,
+                preferences(8, 0, 22, 0, planEnd), NOW);
+
+        assertEquals(6, plan.sessions().size(),
+                "Three days at two sessions per day cap the plan");
+        assertTrue(plan.sessions().stream()
+                        .allMatch(session -> !session.date().isAfter(planEnd)),
+                "An explicit plan end wins over a later task deadline");
+        assertEquals(planEnd, plan.sessions().get(plan.sessions().size() - 1).date());
+        assertTrue(plan.warnings().stream()
+                        .anyMatch(warning -> warning.contains("could not be placed")),
+                "Work beyond the requested end should be reported: " + plan.warnings());
+    }
+
     private static FocusPreferences preferences(int fromHour, int fromMinute,
                                                 int toHour, int toMinute) {
         return new FocusPreferences(time(fromHour, fromMinute), time(toHour, toMinute));
+    }
+
+    private static FocusPreferences preferences(int fromHour, int fromMinute,
+                                                int toHour, int toMinute,
+                                                LocalDate planUntil) {
+        return new FocusPreferences(time(fromHour, fromMinute), time(toHour, toMinute),
+                planUntil);
     }
 
     private static LocalTime time(int hour, int minute) {

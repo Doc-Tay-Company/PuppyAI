@@ -264,10 +264,16 @@ public final class FocusService {
     }
 
     private FocusPlan buildPlan(List<String> notes) {
+        FocusPreferences active = preferences;
         FocusPlan generated = planner.plan(
                 new FocusPlannerInput(classes, tasks),
-                preferences,
+                active,
                 LocalDateTime.now(clock));
+        if (active.planUntil() != null) {
+            // A plan end belongs to the request that produced this plan, not to
+            // every plan afterwards, so it is consumed here.
+            preferences = active.withPlanUntil(null);
+        }
         List<String> warnings = new ArrayList<>(notes);
         warnings.addAll(generated.warnings());
         return new FocusPlan(generated.sessions(), warnings, generated.generatedOn());
@@ -302,7 +308,7 @@ public final class FocusService {
         if (subjects.isEmpty()) {
             return;
         }
-        LocalDate deadline = today().plusDays(7);
+        LocalDate deadline = today().plusDays(FocusPlanner.DEFAULT_HORIZON_DAYS - 1L);
         for (String subject : subjects) {
             tasks.add(new StudyTask(subject, "Review class notes", FocusType.QUICK,
                     REVIEW_TASK_MINUTES, deadline, Priority.MEDIUM));

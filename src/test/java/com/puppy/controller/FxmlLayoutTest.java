@@ -1,10 +1,14 @@
 package com.puppy.controller;
 
+import com.puppy.ai.AiModel;
+import com.puppy.config.AiSettingsStore;
 import com.puppy.config.AppConfig;
 import com.puppy.config.ServiceRegistry;
 import com.puppy.enums.MascotState;
+import com.puppy.service.ModelService;
 import com.puppy.ui.MarkdownRenderer;
 import javafx.application.Platform;
+import javafx.event.ActionEvent;
 import javafx.event.Event;
 import javafx.event.EventType;
 import javafx.fxml.FXMLLoader;
@@ -17,6 +21,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -31,7 +36,9 @@ import javafx.stage.Stage;
 import javafx.stage.Screen;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -39,10 +46,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FxmlLayoutTest {
+
+    @TempDir
+    Path tempDirectory;
 
     @Test
     void allUiLayoutsLoadOnTheJavaFxThread() throws Exception {
@@ -174,8 +185,7 @@ class FxmlLayoutTest {
                         "The Study panel title should identify Study Mode");
                 assertNull(studyStage.getScene().lookup(".study-footer"),
                         "The separate Study footer should be removed");
-                Button studyToggle = (Button) studyStage.getScene().lookup("#startPauseButton");
-                Node panelNode = studyStage.getScene().getRoot();
+                Button studyToggle = (Button) studyStage.getScene().lookup("#startPauseButton");                Node panelNode = studyStage.getScene().getRoot();
                 Bounds panelBounds = panelNode.localToScene(panelNode.getBoundsInLocal());
                 Bounds toggleBounds = studyToggle.localToScene(studyToggle.getBoundsInLocal());
                 assertTrue(panelBounds.contains(toggleBounds),
@@ -258,6 +268,24 @@ class FxmlLayoutTest {
                         "Focus without a time window should ask when the user is free");
                 assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
                         "Asking for free time should return the composer to Chat");
+                List<Button> messageActions = messages.lookupAll(".message-action").stream()
+                        .filter(Button.class::isInstance)
+                        .map(Button.class::cast)
+                        .toList();
+                assertTrue(messageActions.stream()
+                                .anyMatch(button -> "Copy".equals(button.getText())),
+                        "User messages should offer a visible Copy action");
+                List<Button> reuseButtons = messageActions.stream()
+                        .filter(button -> "Reuse".equals(button.getText()))
+                        .toList();
+                assertFalse(reuseButtons.isEmpty(),
+                        "User messages should offer a visible Reuse action");
+                reuseButtons.get(reuseButtons.size() - 1).fire();
+                assertEquals("Math is important and I need more time", messageInput.getText(),
+                        "Reuse should put the previous request back in the message box");
+                assertTrue(messages.lookupAll(".message-bubble").stream()
+                                .allMatch(node -> node.getOnContextMenuRequested() != null),
+                        "Every message should offer a right-click copy menu");
                 closeActivePanel(chatStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -268,12 +296,86 @@ class FxmlLayoutTest {
                 ((Button) moreMenu.getChildren().get(2)).fire();
                 Stage settingsStage = findShowingStage("#alwaysOnTopCheck");
                 CheckBox alwaysOnTop = (CheckBox) settingsStage.getScene().lookup("#alwaysOnTopCheck");
+                @SuppressWarnings("unchecked")
+                ComboBox<Object> settingsModels =
+                        (ComboBox<Object>) settingsStage.getScene().lookup("#modelChoice");
+                assertNotNull(settingsModels, "Settings should offer a model picker");
+                assertFalse(settingsModels.getItems().isEmpty(),
+                        "Settings should list at least the local model");
+                assertNotNull(settingsModels.getValue(),
+                        "Settings should show the active model");
+                assertTrue(settingsStage.getScene().lookup("#openRouterKeyField")
+                                instanceof PasswordField,
+                        "The OpenRouter key field must be masked");
+                Label settingsVersion = (Label) settingsStage.getScene().lookup("#versionLabel");
+                settingsVersion.getScene().getRoot().applyCss();
+                settingsVersion.getScene().getRoot().layout();
+                Bounds settingsVersionBounds =
+                        settingsVersion.localToScene(settingsVersion.getBoundsInLocal());
+                assertTrue(settingsVersionBounds.getMaxY()
+                                <= settingsStage.getScene().getHeight() + 1,
+                        "Settings content should fit inside the window without clipping");
                 alwaysOnTop.fire();
                 assertFalse(stage.isAlwaysOnTop(),
                         "The in-session always-on-top setting should update the mascot stage");
                 assertFalse(settingsStage.isAlwaysOnTop(),
                         "Panel stages should stay behind the mascot when always-on-top is disabled");
                 closeActivePanel(settingsStage, 1);
+
+                // The key section follows the selected model. Use an isolated
+                // data directory so the user's saved model is never touched.
+                FXMLLoader isolatedLoader =
+                        new FXMLLoader(getClass().getResource("/fxml/settings.fxml"));
+                Parent isolatedSettings = isolatedLoader.load();
+                SettingsController isolatedController = isolatedLoader.getController();
+                ModelService isolatedModels = new ModelService(
+                        new AppConfig("Puppy AI", "test", true, tempDirectory,
+                                "http://localhost:11434", AppConfig.DEFAULT_OLLAMA_MODEL,
+                                null, AppConfig.DEFAULT_OPENROUTER_BASE_URL),
+                        new AiSettingsStore(tempDirectory));
+                isolatedController.attach("test", isolatedModels, true,
+                        value -> { }, () -> { }, () -> { }, () -> { }, () -> { });
+                VBox keySection = (VBox) isolatedSettings.lookup("#openRouterKeySection");
+                assertFalse(keySection.isVisible(),
+                        "The OpenRouter key section should be hidden for the local model");
+                assertFalse(keySection.isManaged(),
+                        "A hidden key section must not reserve space in the layout");
+                @SuppressWarnings("unchecked")
+                ComboBox<AiModel> isolatedChoices =
+                        (ComboBox<AiModel>) isolatedSettings.lookup("#modelChoice");
+                assertEquals(4, isolatedChoices.getItems().size(),
+                        "Cloud models should stay listed before a key exists");
+                assertTrue(isolatedChoices.getItems().stream()
+                                .filter(AiModel::cloud)
+                                .allMatch(model -> model.toString().startsWith("OpenRouter · ")),
+                        "Cloud choices should name OpenRouter in the picker");
+                AiModel localChoice = isolatedChoices.getItems().stream()
+                        .filter(model -> !model.cloud())
+                        .findFirst()
+                        .orElseThrow();
+                assertTrue(localChoice.toString().endsWith(" · local"),
+                        "The local choice should keep its local label");
+                AiModel cloudChoice = isolatedChoices.getItems().stream()
+                        .filter(AiModel::cloud)
+                        .findFirst()
+                        .orElseThrow();
+                isolatedChoices.setValue(cloudChoice);
+                assertNotNull(isolatedChoices.getOnAction(),
+                        "Changing the model should run the Settings handler");
+                isolatedChoices.getOnAction().handle(new ActionEvent());
+                assertTrue(keySection.isVisible(),
+                        "Selecting an OpenRouter model should reveal the key section");
+                assertTrue(keySection.isManaged(),
+                        "The revealed key section must take part in the layout");
+                assertFalse(((PasswordField) isolatedSettings.lookup("#openRouterKeyField"))
+                                .isDisabled(),
+                        "The key field should be editable when no key is saved");
+                assertEquals("Not configured",
+                        ((Label) isolatedSettings.lookup("#openRouterKeyPill")).getText());
+                isolatedChoices.setValue(localChoice);
+                isolatedChoices.getOnAction().handle(new ActionEvent());
+                assertFalse(keySection.isVisible(),
+                        "Returning to the local model should hide the key section again");
 
                 Event.fireEvent(mascotDock, doubleClick());
                 menuStage = findShowingStage(".main-menu");

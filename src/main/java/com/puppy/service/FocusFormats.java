@@ -11,6 +11,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -44,6 +45,26 @@ public final class FocusFormats {
             "^(\\d+(?:\\.\\d+)?)(?:hours|hour|hrs|hr|h|gio|g)(\\d{1,2})?"
                     + "(?:minutes|minute|mins|min|phut|p|m)?$");
     private static final Pattern LEADING_NUMBER = Pattern.compile("^(\\d+(?:\\.\\d+)?)");
+    private static final String DATE_TOKEN =
+            "(\\d{4}\\s*[-/]\\s*\\d{1,2}\\s*[-/]\\s*\\d{1,2}"
+                    + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}\\s*[-/]\\s*\\d{2,4}"
+                    + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}"
+                    + "|\\d{1,2}\\s+thang\\s+\\d{1,2}(?:\\s+nam\\s+\\d{4})?)";
+    private static final Pattern PLAN_END_DATE = Pattern.compile(
+            "(?:deadline|due(?: date)?|han(?:\\s+(?:chot|nop|cuoi))?|ngay hen|appointment"
+                    + "|hen(?: gap)?|truoc(?: ngay)?|by|before|until|den(?: ngay)?"
+                    + "|toi(?: ngay)?|vao(?: ngay)?|ngay)\\s*[:,\\-]?\\s*" + DATE_TOKEN,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PLAN_WEEKS = Pattern.compile(
+            "(?<!thu )(?<!moi )(?<!hang )(\\d{1,2})\\s*(?:tuan|weeks?|week)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PLAN_MONTHS = Pattern.compile(
+            "(?<!thu )(?<!moi )(?<!hang )(\\d{1,2})\\s*(?:thang|months?|month)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PLAN_DAYS = Pattern.compile(
+            "(?<!thu )(?<!moi )(?<!hang )(\\d{1,3})\\s*(?:ngay|days?|day)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final int MAX_PLAN_DAYS = 365;
     private static final DateTimeFormatter ISO_DATE = DateTimeFormatter.ISO_LOCAL_DATE;
     private static final DateTimeFormatter DAY_MONTH_YEAR = DateTimeFormatter.ofPattern("d/M/yyyy");
     private static final DateTimeFormatter DAY_MONTH_YEAR_DASHES =
@@ -156,6 +177,130 @@ public final class FocusFormats {
                 || normalized.contains("bat cu luc nao")
                 || normalized.contains("khi nao cung duoc")
                 || normalized.contains("ca ngay");
+    }
+
+    /**
+     * Finds the last day a plan should cover when the user states it in the
+     * request, for example {@code trong 3 ngày}, {@code for 10 days},
+     * {@code 2 tuần}, {@code 1 tháng}, {@code deadline 20/11} or
+     * {@code before 2026-11-20}.
+     *
+     * <p>Durations are inclusive: "3 ngày" means today plus the next two days.
+     * Dates without a year use the next non-past occurrence. The result is
+     * capped at one year so a typo cannot create an enormous plan. An empty
+     * result means the caller should use the default horizon (one week, or the
+     * latest task deadline).</p>
+     */
+    public static Optional<LocalDate> parsePlanEnd(String value, LocalDate today) {
+        Objects.requireNonNull(today, "today");
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+        String text = normalize(value).replace('\u00a0', ' ').replaceAll("\\s+", " ");
+
+        Matcher dates = PLAN_END_DATE.matcher(text);
+        if (dates.find()) {
+            LocalDate parsed = parsePlanDate(dates.group(1), today);
+            if (parsed != null) {
+                return Optional.of(capPlanEnd(parsed, today));
+            }
+        }
+
+        if (text.contains("hom nay") || text.contains("today")) {
+            return Optional.of(today);
+        }
+        if (text.contains("ngay mai") || text.contains("tomorrow")) {
+            return Optional.of(today.plusDays(1));
+        }
+
+        Matcher weeks = PLAN_WEEKS.matcher(text);
+        if (weeks.find()) {
+            return planDaysEnd(today, parseCount(weeks.group(1)) * 7L);
+        }
+        Matcher months = PLAN_MONTHS.matcher(text);
+        if (months.find()) {
+            long count = parseCount(months.group(1));
+            if (count > 0) {
+                LocalDate end = today.plusMonths(Math.min(count, 12)).minusDays(1);
+                return Optional.of(capPlanEnd(end, today));
+            }
+        }
+        Matcher days = PLAN_DAYS.matcher(text);
+        if (days.find()) {
+            return planDaysEnd(today, parseCount(days.group(1)));
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<LocalDate> planDaysEnd(LocalDate today, long days) {
+        if (days <= 0) {
+            return Optional.empty();
+        }
+        long capped = Math.min(days, MAX_PLAN_DAYS);
+        return Optional.of(today.plusDays(capped - 1));
+    }
+
+    private static LocalDate capPlanEnd(LocalDate date, LocalDate today) {
+        LocalDate earliest = date.isBefore(today) ? today : date;
+        LocalDate latest = today.plusDays(MAX_PLAN_DAYS - 1L);
+        return earliest.isAfter(latest) ? latest : earliest;
+    }
+
+    private static long parseCount(String value) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** Parses one date token from {@link #PLAN_END_DATE} in normalized text. */
+    private static LocalDate parsePlanDate(String token, LocalDate today) {
+        String cleaned = token == null ? "" : token.strip();
+        Matcher vietnamese = Pattern.compile(
+                "(\\d{1,2})\\s+thang\\s+(\\d{1,2})(?:\\s+nam\\s+(\\d{4}))?")
+                .matcher(cleaned);
+        if (vietnamese.matches()) {
+            Integer year = vietnamese.group(3) == null
+                    ? null : Integer.valueOf(vietnamese.group(3));
+            return planDate(Integer.parseInt(vietnamese.group(1)),
+                    Integer.parseInt(vietnamese.group(2)), year, today);
+        }
+
+        Matcher numeric = Pattern.compile(
+                "(\\d{1,4})\\s*[-/]\\s*(\\d{1,2})(?:\\s*[-/]\\s*(\\d{2,4}))?")
+                .matcher(cleaned);
+        if (!numeric.matches()) {
+            return null;
+        }
+        int first = Integer.parseInt(numeric.group(1));
+        int second = Integer.parseInt(numeric.group(2));
+        String third = numeric.group(3);
+        if (first >= 1000) {
+            if (third == null) {
+                return null;
+            }
+            return planDate(Integer.parseInt(third), second, first, today);
+        }
+        Integer year = third == null ? null : normalizeYear(Integer.parseInt(third));
+        return planDate(first, second, year, today);
+    }
+
+    private static Integer normalizeYear(int year) {
+        return year < 100 ? 2000 + year : year;
+    }
+
+    private static LocalDate planDate(int day, int month, Integer year, LocalDate today) {
+        try {
+            int resolvedYear = year == null ? today.getYear() : year;
+            LocalDate date = LocalDate.of(resolvedYear, month, day);
+            if (year == null && date.isBefore(today)) {
+                date = date.plusYears(1);
+            }
+            return date;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** Parses ISO dates plus the Vietnamese-style {@code 20/11/2026}. */

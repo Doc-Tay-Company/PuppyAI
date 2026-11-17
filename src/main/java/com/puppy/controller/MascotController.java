@@ -55,7 +55,8 @@ public class MascotController {
     private static final double STUDY_HEIGHT = 470;
     private static final double STUDY_MIN_HEIGHT = 340;
     private static final double SETTINGS_WIDTH = 620;
-    private static final double SETTINGS_HEIGHT = 660;
+    private static final double SETTINGS_HEIGHT = 780;
+    private static final double SETTINGS_MIN_HEIGHT = 420;
     private static final double CHAT_PREFERRED_WIDTH = 940;
     private static final double CHAT_PREFERRED_HEIGHT = 720;
     private static final double FOCUS_PREFERRED_WIDTH = 980;
@@ -309,11 +310,10 @@ public class MascotController {
         Parent view = loader.load();
         settingsController = loader.getController();
         settingsController.attach(services.config().appVersion(),
-                services.chatService().describeLocalModel(),
-                services.chatService().baseUrl(),
+                services.modelService(),
                 stage.isAlwaysOnTop(),
                 this::setAlwaysOnTop, this::closePanel, this::collapseToMascot,
-                this::returnToMainMenu);
+                this::returnToMainMenu, this::resizeSettingsPanel);
         return view;
     }
 
@@ -349,7 +349,8 @@ public class MascotController {
         about.setAlignment(Pos.CENTER);
         about.getChildren().add(new Label("Puppy AI"));
         about.getChildren().add(new Label("A little desktop companion for chat and focused study."));
-        about.getChildren().add(new Label("Chat runs locally through Ollama. Web research arrives later."));
+        about.getChildren().add(new Label(
+                "Chat runs through OpenRouter or the local Ollama model."));
         about.getChildren().add(menuItem("Back to menu", this::showMainMenu));
         menuHost.getChildren().setAll(about);
         showMenu(MENU_WIDTH, MENU_HEIGHT);
@@ -438,6 +439,14 @@ public class MascotController {
         return panelStage;
     }
 
+    /** Recomputes the Settings window height when the key section appears or hides. */
+    private void resizeSettingsPanel() {
+        Stage panelStage = panelStages.get(Panel.SETTINGS);
+        if (panelStage != null) {
+            positionPanelStage(Panel.SETTINGS, panelStage, false);
+        }
+    }
+
     private void positionPanelStage(Panel panel, Stage panelStage, boolean expanded) {
         Rectangle2D bounds = primaryScreenBounds();
         double availableWidth = Math.max(1, bounds.getWidth() - SCREEN_EDGE_MARGIN * 2);
@@ -456,7 +465,12 @@ public class MascotController {
             }
             case SETTINGS -> {
                 preferredWidth = SETTINGS_WIDTH;
-                preferredHeight = SETTINGS_HEIGHT;
+                Parent root = panelStage.getScene().getRoot();
+                root.applyCss();
+                double contentHeight = root.prefHeight(preferredWidth);
+                preferredHeight = Double.isFinite(contentHeight) && contentHeight > 0
+                        ? Math.min(SETTINGS_HEIGHT, Math.max(SETTINGS_MIN_HEIGHT, contentHeight + 24))
+                        : SETTINGS_HEIGHT;
             }
             case FOCUS -> {
                 preferredWidth = focusWidth;

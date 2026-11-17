@@ -108,6 +108,24 @@
     -fx-text-fill: #3e765e;
 }
 
+.status-pill.cloud-pill {
+    -fx-background-color: #e8eefc;
+    -fx-text-fill: #3d5a9a;
+}
+
+.status-pill.local-pill {
+    -fx-background-color: #e5f2e9;
+    -fx-text-fill: #3e765e;
+}
+
+.settings-field {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 10;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
+    -fx-padding: 7 9;
+}
+
 .muted-copy {
     -fx-font-size: 12px;
     -fx-text-fill: #8a7263;
@@ -180,6 +198,24 @@
     -fx-font-size: 10px;
     -fx-text-fill: #a58974;
     -fx-padding: 0 5;
+}
+
+.message-actions {
+    -fx-padding: 0 4;
+}
+
+.message-action {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-text-fill: #9a7a63;
+    -fx-font-size: 10px;
+    -fx-padding: 1 5;
+    -fx-cursor: hand;
+}
+
+.message-action:hover {
+    -fx-background-color: #fff0e2;
+    -fx-text-fill: #6b4226;
 }
 
 .user-bubble {

@@ -1,6 +1,6 @@
 package com.puppy.controller;
 
-import com.puppy.ai.OllamaException;
+import com.puppy.ai.AiException;
 import com.puppy.document.DocumentExtractionException;
 import com.puppy.enums.MascotState;
 import com.puppy.enums.MessageRole;
@@ -25,13 +25,17 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -43,6 +47,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -54,7 +59,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.function.BooleanSupplier;
 
 /**
- * Chat panel backed by the local Ollama model.
+ * Chat panel backed by the selected AI model.
  *
  * <p>Replies stream from {@link ChatService} on the shared worker pool. All
  * JavaFX updates are marshalled back with {@link Platform#runLater}. The panel
@@ -84,9 +89,14 @@ public class ChatController {
 
     /**
      * A focus request waiting for the user's free-time window. The typed
-     * description is kept so the plan can start as soon as the window arrives.
+     * description and the plan end are kept so the plan can start as soon as
+     * the window arrives.
      */
-    private record PendingFocus(String description) {
+    private record PendingFocus(String description, LocalDate planUntil) {
+
+        private PendingFocus withPlanUntil(LocalDate value) {
+            return new PendingFocus(description, value);
+        }
     }
 
     private static final int MAX_ATTACHMENTS = 5;
@@ -328,8 +338,8 @@ public class ChatController {
     }
 
     /**
-     * Handles slash commands before a request reaches Ollama. The command output
-     * is a normal assistant message, so it stays in the session history.
+     * Handles slash commands before a request reaches the model. The command
+     * output is a normal assistant message, so it stays in the session history.
      *
      * @return {@code true} when the input was a command and needs no model reply
      */
@@ -366,13 +376,19 @@ public class ChatController {
                 Choose an option next to the message box, then press Send.
 
                 - **Focus plan** - read your pinned files or typed subject description
-                - **Model** - show the local model and server
+                - **Model** - show the selected model and provider
                 - **Help** - show this list
 
-                **Chat** sends everything else to the local model.
+                **Chat** sends everything else to the selected model.
 
+                Right-click a message to copy it, or use **Copy** / **Reuse** under your
+                requests. **Ctrl+V** pastes into the message box.
+
+                Switch between cloud and local models in **More > Settings**.
                 Puppy chooses **Quick** or **Deep** focus from your description: subjects
-                that are important, difficult or need more time become Deep focus.""";
+                that are important, difficult or need more time become Deep focus.
+                A focus plan covers one week by default; say **in 10 days** or
+                **deadline 20/11** to choose a different end date.""";
     }
 
     /**
@@ -428,12 +444,13 @@ public class ChatController {
         addMessage("user", typed.isEmpty() ? "Focus plan" : typed, fileNames);
 
         Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(typed);
+        LocalDate planUntil = FocusFormats.parsePlanEnd(typed, LocalDate.now()).orElse(null);
         if (window.isPresent()) {
-            applyFreeTime(window.get());
+            applyFreeTime(window.get().withPlanUntil(planUntil));
             return startFocusDocuments(typed);
         }
 
-        pendingFocus = new PendingFocus(typed);
+        pendingFocus = new PendingFocus(typed, planUntil);
         addMessage("assistant", freeTimeQuestion(), List.of());
         scrollToBottom();
         mascotStateService.resetToIdle();
@@ -460,7 +477,11 @@ public class ChatController {
         }
 
         Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(message);
+        Optional<LocalDate> answeredEnd = FocusFormats.parsePlanEnd(message, LocalDate.now());
         if (window.isEmpty()) {
+            if (answeredEnd.isPresent() && pendingFocus != null) {
+                pendingFocus = pendingFocus.withPlanUntil(answeredEnd.get());
+            }
             addMessage("user", message, List.of());
             addMessage("assistant", freeTimeRetry(), List.of());
             scrollToBottom();
@@ -471,7 +492,8 @@ public class ChatController {
         PendingFocus pending = pendingFocus;
         pendingFocus = null;
         addMessage("user", message, List.of());
-        applyFreeTime(window.get());
+        LocalDate planUntil = answeredEnd.orElse(pending.planUntil());
+        applyFreeTime(window.get().withPlanUntil(planUntil));
         startFocusDocuments(pending.description());
         messageInput.requestFocus();
     }
@@ -479,9 +501,18 @@ public class ChatController {
     /** Saves the window and confirms it before the plan is built. */
     private void applyFreeTime(FocusPreferences window) {
         focusService.setPreferences(window);
-        addMessage("assistant", "Got it - I'll schedule inside **"
-                + FocusFormats.formatTime(window.earliest()) + " - "
-                + FocusFormats.formatTime(window.latest()) + "**.", List.of());
+        StringBuilder confirmation = new StringBuilder("Got it - I'll schedule inside **")
+                .append(FocusFormats.formatTime(window.earliest()))
+                .append(" - ")
+                .append(FocusFormats.formatTime(window.latest()))
+                .append("**");
+        if (window.planUntil() != null) {
+            confirmation.append(", with the plan ending **")
+                    .append(FocusFormats.formatDate(window.planUntil()))
+                    .append("**");
+        }
+        confirmation.append(".");
+        addMessage("assistant", confirmation.toString(), List.of());
     }
 
     /**
@@ -575,6 +606,8 @@ public class ChatController {
                 Tell me how the subject feels - important, difficult, or not fully mastered -
                 and I'll book longer Deep focus sessions. Light review and reading stay Quick.
                 If you don't mention a free-time window, I'll ask for one before planning.
+                Say **in 3 days**, **for 2 weeks** or **deadline 20/11** to set the plan
+                end; otherwise the plan covers one week.
 
                 Supported files: PDF, DOCX, DOC, TXT and MD. You can also build the plan by
                 hand in **Focus Planner**.""";
@@ -659,9 +692,15 @@ public class ChatController {
         if (chatService == null) {
             return "I don't know which model is loaded yet.";
         }
-        return "**Model:** `" + chatService.modelName() + "`\n\n"
-                + "**Server:** " + chatService.baseUrl() + "\n\n"
-                + "I run locally through Ollama.";
+        StringBuilder reply = new StringBuilder()
+                .append("**Model:** `").append(chatService.modelName()).append("`\n\n")
+                .append("**Provider:** ").append(chatService.providerName())
+                .append(" (").append(chatService.isCloud() ? "cloud" : "local").append(")\n\n");
+        if (!chatService.isCloud()) {
+            reply.append("**Server:** ").append(chatService.connectionLabel()).append("\n\n");
+        }
+        reply.append("Switch models in **More > Settings**.");
+        return reply.toString();
     }
 
     private void streamReply(int generation, List<ChatMessage> conversation,
@@ -671,17 +710,17 @@ public class ChatController {
                     token -> enqueueToken(generation, token));
             long elapsedMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
             Platform.runLater(() -> completeReply(generation, reply, elapsedMillis));
-        } catch (OllamaException e) {
-            if (e.reason() == OllamaException.Reason.INTERRUPTED) {
+        } catch (AiException e) {
+            if (e.reason() == AiException.Reason.INTERRUPTED) {
                 return;
             }
             String message = e.getMessage() == null || e.getMessage().isBlank()
-                    ? "I couldn't get a reply from the local model."
+                    ? "I couldn't get a reply from the AI model."
                     : e.getMessage();
             Platform.runLater(() -> failReply(generation, message));
         } catch (RuntimeException e) {
             Platform.runLater(() -> failReply(generation,
-                    "Something went wrong while talking to the local model. Please try again."));
+                    "Something went wrong while talking to the AI model. Please try again."));
         } finally {
             // The worker pool is shared; never leave a cancelled request's
             // interrupt flag set for the next task on this thread.
@@ -735,6 +774,9 @@ public class ChatController {
         if (streamingLabel != null) {
             streamingLabel.setText(text);
         }
+        if (streamingBubble != null) {
+            streamingBubble.text(text);
+        }
         currentMessages.set(streamingMessageIndex,
                 new Message("assistant", text, List.of()));
         messageScroll.setVvalue(1.0);
@@ -749,7 +791,7 @@ public class ChatController {
 
         String finalText = reply == null ? "" : reply.strip();
         if (finalText.isEmpty()) {
-            finalText = "The local model returned an empty reply. Try rephrasing your question.";
+            finalText = "The model returned an empty reply. Try rephrasing your question.";
         }
 
         if (streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
@@ -778,7 +820,7 @@ public class ChatController {
         streamTicker.stop();
 
         String error = message == null || message.isBlank()
-                ? "I couldn't get a reply from the local model."
+                ? "I couldn't get a reply from the AI model."
                 : message;
 
         if (streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
@@ -1209,7 +1251,8 @@ public class ChatController {
         column.setAlignment(user ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         column.getChildren().add(bubble);
 
-        MessageBubble handle = new MessageBubble(bubble, content, column);
+        MessageBubble handle = new MessageBubble(bubble, content, column, message.text());
+        installCopyMenu(handle, user);
         showCompletionTime(handle, message.elapsedMillis());
 
         for (String fileName : message.attachments()) {
@@ -1219,6 +1262,9 @@ public class ChatController {
             file.getStyleClass().add("message-attachment");
             column.getChildren().add(file);
         }
+        if (user) {
+            column.getChildren().add(messageActions(handle));
+        }
 
         HBox row = new HBox(column);
         row.setAlignment(user ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
@@ -1226,6 +1272,70 @@ public class ChatController {
 
         renderBubbleContent(handle, message.text());
         return handle;
+    }
+
+    /** Right-click actions available on every message bubble. */
+    private void installCopyMenu(MessageBubble bubble, boolean user) {
+        ContextMenu menu = new ContextMenu();
+        MenuItem copy = new MenuItem("Copy message");
+        copy.setOnAction(event -> copyToClipboard(bubble.text()));
+        MenuItem reuse = new MenuItem(user ? "Reuse this request" : "Reuse in message box");
+        reuse.setOnAction(event -> reuseMessage(bubble.text()));
+        menu.getItems().addAll(copy, reuse);
+        bubble.box().setOnContextMenuRequested(event -> {
+            menu.show(bubble.box(), event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
+        Tooltip.install(bubble.box(), new Tooltip("Right-click to copy this message"));
+    }
+
+    /** Small Copy / Reuse actions under the user's own requests. */
+    private HBox messageActions(MessageBubble bubble) {
+        Button copy = new Button("Copy");
+        copy.getStyleClass().add("message-action");
+        copy.setFocusTraversable(false);
+        copy.setOnAction(event -> copyFromButton(copy, bubble.text()));
+
+        Button reuse = new Button("Reuse");
+        reuse.getStyleClass().add("message-action");
+        reuse.setFocusTraversable(false);
+        reuse.setOnAction(event -> reuseMessage(bubble.text()));
+
+        HBox actions = new HBox(4, copy, reuse);
+        actions.getStyleClass().add("message-actions");
+        actions.setAlignment(Pos.CENTER_RIGHT);
+        return actions;
+    }
+
+    private void copyFromButton(Button source, String text) {
+        if (!copyToClipboard(text)) {
+            return;
+        }
+        String previous = source.getText();
+        source.setText("Copied");
+        PauseTransition reset = new PauseTransition(Duration.millis(1_200));
+        reset.setOnFinished(event -> source.setText(previous));
+        reset.play();
+    }
+
+    private static boolean copyToClipboard(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text);
+        Clipboard.getSystemClipboard().setContent(content);
+        return true;
+    }
+
+    /** Puts a previous request back into the composer without sending it. */
+    private void reuseMessage(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        messageInput.setText(text);
+        messageInput.positionCaret(text.length());
+        messageInput.requestFocus();
     }
 
     /** Adds the small "Completed in" footer under a finished model reply. */
@@ -1244,6 +1354,7 @@ public class ChatController {
     }
 
     private void renderBubbleContent(MessageBubble bubble, String text) {
+        bubble.text(text);
         bubble.content().getChildren().clear();
         if (text == null || text.isBlank()) {
             return;
@@ -1299,7 +1410,39 @@ public class ChatController {
         }
     }
 
-    private record MessageBubble(VBox box, VBox content, VBox column) {
+    private static final class MessageBubble {
+
+        private final VBox box;
+        private final VBox content;
+        private final VBox column;
+        private String text;
+
+        private MessageBubble(VBox box, VBox content, VBox column, String text) {
+            this.box = box;
+            this.content = content;
+            this.column = column;
+            this.text = text == null ? "" : text;
+        }
+
+        private VBox box() {
+            return box;
+        }
+
+        private VBox content() {
+            return content;
+        }
+
+        private VBox column() {
+            return column;
+        }
+
+        private String text() {
+            return text;
+        }
+
+        private void text(String value) {
+            text = value == null ? "" : value;
+        }
     }
 
     private record Message(String role, String text, List<String> attachments,

@@ -1,6 +1,7 @@
 package com.puppy.service;
 
-import com.puppy.ai.OllamaClient;
+import com.puppy.config.AiSettingsStore;
+import com.puppy.config.AppConfig;
 import com.puppy.document.DocumentTextExtractor;
 import com.puppy.model.DocumentAttachment;
 import org.junit.jupiter.api.Test;
@@ -19,16 +20,17 @@ class ChatServiceTest {
     Path tempDirectory;
 
     @Test
-    void buildsAFriendlyLabelFromTheRegistryModelName() {
+    void buildsAFriendlyLabelFromTheConfiguredLocalModel() {
         ChatService service = service();
 
-        assertEquals("Qwen3.5 9B", service.localModelLabel());
+        assertEquals("Qwen3.5 9B", service.modelLabel());
         assertEquals("Hi! I'm Puppy, your desktop companion. Ask me anything.",
                 service.greeting(),
                 "The new-chat greeting should end at Ask me anything");
         assertFalse(service.greeting().contains("Qwen3.5 9B"),
                 "The new-chat greeting should not name the model");
-        assertTrue(service.describeLocalModel().contains("hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M"));
+        assertTrue(service.describeSelectedModel().contains("hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M"));
+        assertFalse(service.isCloud());
     }
 
     @Test
@@ -42,9 +44,17 @@ class ChatServiceTest {
     }
 
     private ChatService service() {
+        AppConfig config = new AppConfig(
+                "Puppy AI",
+                "test",
+                true,
+                tempDirectory,
+                "http://localhost:11434",
+                "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M",
+                null,
+                AppConfig.DEFAULT_OPENROUTER_BASE_URL);
         return new ChatService(
-                new OllamaClient("http://localhost:11434",
-                        "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M"),
+                new ModelService(config, new AiSettingsStore(tempDirectory)),
                 new DocumentTextExtractor());
     }
 }
