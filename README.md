@@ -5,18 +5,18 @@ you, researches the web and runs study sessions. JavaFX frontend with pure Java
 services in a single desktop process — no Python, no separate server.
 
 **Status: local AI chat and Focus planning are wired up.** The app launches as a
-frameless, transparent, always-on-top puppy. Click the puppy for a random
-message, double-click to open Study / Focus / Chat / More, and the shell expands
-around the mascot while keeping its screen anchor. After five idle minutes the
-puppy falls asleep; click it to wake it up. Chat streams Markdown replies from
-the local model through **Ollama**, offers **Focus plan / Model / Help** next to
-the message box, and can read pinned PDF, Word and text files into the
-conversation. Focus planning reads a pinned timetable or subject file, or a
-typed subject description, infers Quick or Deep focus from how you describe the
-subject, asks for your free-time window when it is missing, and builds a
-constraint-aware study plan while the Focus Planner panel supports hand-made
-classes, tasks and sessions. Chat, focus data and attachments are session-only;
-cloud AI and persistence are future work.
+frameless, transparent, always-on-top puppy. The mascot stays in its desktop
+window while the menu and feature panels open in separate windows. Click the
+puppy for a random message, double-click to open Study / Focus / Chat / More.
+After five idle minutes the puppy falls asleep; click it to wake it up. Chat
+streams Markdown replies from the local model through **Ollama**, offers
+**Focus plan / Model / Help** next to the message box, and can read pinned PDF,
+Word and text files into the conversation. Focus planning reads a pinned
+timetable or subject file, or a typed subject description, infers Quick or Deep
+focus from how you describe the subject, asks for your free-time window when it
+is missing, and builds a constraint-aware study plan while the Focus Planner
+panel supports hand-made classes, tasks and sessions. Chat, focus data and
+attachments are session-only; cloud AI and persistence are future work.
 
 ## Requirements
 
@@ -82,12 +82,12 @@ mvn javafx:run        # launch Puppy
 | Double-click the puppy | Open or close the Study / Focus / Chat / More menu |
 | Idle for five minutes | Puppy falls asleep; click it to wake it up |
 | Every two minutes | Puppy may show a quiet notification while idle |
-| Study / Focus / Chat | Open the matching panel above the puppy; Menu returns to the main menu |
-| Menu (inside a panel) | Go back to the Study / Focus / Chat / More menu |
+| Study / Focus / Chat | Open the matching panel in a separate window without moving the mascot |
+| Menu (inside a panel) | Return to the Study / Focus / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
-| Composer option (Chat) | Choose Chat, Focus plan, Model or Help |
-| 📌 (Chat) | Pin a PDF, Word document, TXT or Markdown file to the current chat |
-| Focus plan | Read pinned files or a typed subject description, ask for free time if needed, and build a study plan |
+| Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
+| Chat options | Choose Chat, Focus plan, Model or Help beside the message box |
+| `/model` | Keyboard fallback to show the local model and Ollama server |
 | More | Open Focus Planner, Settings, session chat history, Help / About, collapse, or quit |
 | Escape | Close the current panel/menu and return to the puppy |
 | Right-click | Development menu: switch mascot states or quit |
@@ -98,14 +98,14 @@ right-click development menu) to exit.
 
 ## Mascot states
 
-| State | Sheet row | Purpose |
+| State | Frames | Purpose |
 | --- | --- | --- |
-| `IDLE` | 1 | Default desktop state |
+| `IDLE` | 3 | Default desktop state |
 | `HAPPY` | 2 | Positive reactions |
-| `THINKING` | 3 | Processing requests |
-| `TALKING` | 4 | Delivering responses |
-| `STUDYING` | 5 | Study mode |
-| `SLEEPING` | 6 | Five idle minutes without a panel or active study timer |
+| `THINKING` | 2 | Processing requests |
+| `TALKING` | 2 | Delivering responses |
+| `STUDYING` | 2 | Study mode |
+| `SLEEPING` | 2 | Five idle minutes without a panel or active study timer |
 
 `MascotSprites` owns the animation timing, `MascotAnimator` drives the frames,
 and `MascotStateService` is the single place the rest of the application asks
@@ -113,26 +113,20 @@ for a state change. `MascotController` also owns the inactivity timer, the
 two-minute notification timer and the random click/wake lines in
 `MascotMessages`.
 
-## Sprite sheet
+## Sprite images
 
-`src/main/resources/sprites/new_spritesheet.png` is a **6 × 6 grid**: six
-animation frames per row and one row per state, in the order shown above. The
-current sheet uses 128 × 128 px cells, but the animator derives the frame size
-from the image, so any sheet that stays on the 6 × 6 grid works without code
-changes. Frames are played by moving the image view's viewport, which keeps
-state switches cheap.
+Each animation uses separate transparent PNG frames in
+`src/main/resources/sprites/<state>/`, named `0.png`, `1.png`, and so on. The
+animator loads them once and switches the displayed image; it does not slice a
+spritesheet.
 
-The animator cuts exact cells, so each frame must be drawn on the same anchor:
-centred horizontally and with the paws on a common ground line, with effects
-kept inside the cell. Breaking that rule makes animations shake and lets parts
-of one row appear in the next.
+Frame timing is per image: IDLE, HAPPY, STUDYING and TALKING use 2,000 ms;
+THINKING uses 500 ms; SLEEPING uses 1,000 ms. Keep character scale and paw
+baseline consistent within each state to avoid visible jumps.
 
-Use `docs/spritesheet-guide.png` (768 × 768, 128 × 128 px cells) as a trace layer
-and follow [docs/SPRITESHEET_GUIDE.md](docs/SPRITESHEET_GUIDE.md) for the anchor
-rules, row order, an AI prompt and a troubleshooting table.
-
-`src/main/resources/icons/puppy.png` is the window/taskbar icon, cropped from
-the idle frame of the sheet.
+The old spritesheet instructions are a legacy reference only; the runtime uses
+the numbered frame images. `src/main/resources/icons/puppy.png` is the
+window/taskbar icon.
 
 ## Architecture
 
@@ -150,9 +144,9 @@ Infrastructure        Ollama HTTP client, document extraction, configuration,
 | `PuppyApplication` | JavaFX entry point, builds the transparent always-on-top stage |
 | `ServiceRegistry` | Creates and shuts down application services |
 | `AppConfig` | App name, version, always-on-top flag, data directory, Ollama URL and model |
-| `MascotController` | Expandable shell, mascot interactions, sleep/notification timers, panel navigation and drag-safe movement |
-| `MascotAnimator` | Frame timing and viewport switching |
-| `MascotSprites` | Sheet layout and per-state animation metadata |
+| `MascotController` | Fixed mascot window, separate menu/panel windows, mascot interactions and timers |
+| `MascotAnimator` | Frame timing and per-state image switching |
+| `MascotSprites` | Ordered frame resources and per-state animation metadata |
 | `MascotMessages` | Random click, wake and notification lines |
 | `MarkdownRenderer` | Safe Markdown-to-JavaFX rendering for chat bubbles |
 | `MascotStateService` | Thread-safe current state with listener notifications |
@@ -202,7 +196,7 @@ src/main/resources/
 ├── css/          puppy.css
 ├── fxml/         shell.fxml, chat.fxml, study.fxml, focus.fxml, settings.fxml
 ├── icons/        puppy.png
-└── sprites/      new_spritesheet.png
+└── sprites/      state folders with numbered PNG frames
 src/test/java/com/puppy/
 ├── ai/           OllamaClientTest
 ├── controller/   FxmlLayoutTest
@@ -295,12 +289,12 @@ a new generation. Persistence is planned with the SQLite milestone.
 
 ## Local chat and document attachments
 
-The app follows the mascot → menu → Study / Focus / Chat / More flow. The
-expandable shell caches the Chat, Study, Focus and Settings panels; closing or
-minimizing a panel returns to the mascot.
+The app follows the mascot → menu → Study / Focus / Chat / More flow. The mascot
+stays in its fixed desktop window while the menu and feature panels use separate
+windows. Chat, Study, Focus and Settings views are cached between openings.
 
-- **Chat** opens in a roomy, monitor-aware panel with an Expand / Restore
-  toggle. Replies stream from the local Ollama model on the shared worker pool;
+- **Chat** opens centered on the primary screen in a roomy window with an
+  Expand / Restore toggle. Replies stream from the local Ollama model on the shared worker pool;
   tokens are batched onto an 80 ms UI ticker so a fast model cannot flood the
   JavaFX Application Thread. Blank input is rejected unless a document is
   attached. Assistant replies are rendered as Markdown (headings, emphasis,

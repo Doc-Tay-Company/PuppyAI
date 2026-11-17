@@ -1,4 +1,9 @@
-# Mascot spritesheet guide
+# Legacy mascot spritesheet guide
+
+> The current runtime does not use a spritesheet. It loads numbered PNG frames
+> separately from `src/main/resources/sprites/<state>/`. This guide and its
+> template are retained only as a reference for older artwork; do not follow its
+> export instructions for the active animation system.
 
 The animator slices the sheet into exact cells and moves a viewport from frame to
 frame. It cannot correct artwork that is drawn in the wrong place, which is why
@@ -110,9 +115,11 @@ one generate poses, then place them yourself using the template.
 
 ## Checking and troubleshooting
 
-The build test `MascotSpritesTest` verifies that the sheet still divides into
-6 × 6 and that every cell actually contains artwork. It cannot see alignment, so
-check these by eye:
+These checks describe the legacy sheet workflow. The current
+`MascotSpritesTest` instead verifies that every configured numbered PNG exists,
+is readable and transparent, and has the expected dimensions, frame count and
+timing. It does not validate spritesheets. For the old workflow, check these by
+eye:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |

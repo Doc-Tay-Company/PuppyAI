@@ -2,34 +2,33 @@ package com.puppy.ui;
 
 import com.puppy.enums.MascotState;
 import javafx.animation.AnimationTimer;
-import javafx.geometry.Rectangle2D;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
  * Plays mascot sprite animations on an {@link ImageView}.
  *
- * <p>The spritesheet is loaded once and each animation is played by moving the
- * image view's viewport to the active frame cell, so switching states never
- * reloads or copies pixels. Frame timing comes from {@link MascotSprites}.</p>
+ * <p>Each state's frame images are loaded once and played in order by changing
+ * the image view's image. Frame timing comes from {@link MascotSprites}.</p>
  *
  * <p>Must be used on the JavaFX Application Thread.</p>
  */
 public final class MascotAnimator {
 
     private final ImageView target;
-    private final Image sheet;
-    private final int frameWidth;
-    private final int frameHeight;
+    private final Map<MascotState, List<Image>> frames;
     private final AnimationTimer timer;
 
     private MascotState currentState;
-    private int currentRow;
     private int frameIndex;
     private long currentFrameDurationNanos;
     private long lastFrameNanos;
@@ -39,12 +38,9 @@ public final class MascotAnimator {
 
     public MascotAnimator(ImageView target) {
         this.target = Objects.requireNonNull(target, "target");
-        this.sheet = loadSheet();
-        this.frameWidth = frameSize(sheet.getWidth(), MascotSprites.COLUMNS);
-        this.frameHeight = frameSize(sheet.getHeight(), MascotSprites.ROWS);
-
-        target.setImage(sheet);
-        applyFrame();
+        this.frames = loadFrames();
+        target.setViewport(null);
+        target.setImage(frames.get(MascotState.IDLE).get(0));
 
         this.timer = new AnimationTimer() {
             @Override
@@ -64,7 +60,6 @@ public final class MascotAnimator {
         boolean stateChanged = state != currentState;
 
         currentState = state;
-        currentRow = animation.row();
         currentFrameDurationNanos = Math.round(animation.frameDurationMillis() * 1_000_000);
 
         if (stateChanged) {
@@ -133,7 +128,7 @@ public final class MascotAnimator {
             return;
         }
 
-        int frameCount = MascotSprites.animationFor(currentState).frameCount();
+        int frameCount = frames.get(currentState).size();
         long frameDuration = Math.max(1, Math.round(currentFrameDurationNanos / speed));
         long elapsed = now - lastFrameNanos;
         if (elapsed < frameDuration) {
@@ -147,34 +142,34 @@ public final class MascotAnimator {
     }
 
     private void applyFrame() {
-        target.setViewport(new Rectangle2D(
-                frameIndex * frameWidth,
-                currentRow * frameHeight,
-                frameWidth,
-                frameHeight));
+        target.setImage(frames.get(currentState).get(frameIndex));
     }
 
-    private static int frameSize(double sheetSize, int cells) {
-        int size = (int) Math.round(sheetSize);
-        if (size <= 0) {
-            throw new IllegalStateException("Mascot spritesheet is empty");
-        }
-        if (size % cells != 0) {
-            throw new IllegalStateException(
-                    "Mascot spritesheet size " + size + "px does not divide into " + cells + " cells");
-        }
-        return size / cells;
-    }
-
-    private static Image loadSheet() {
-        try (InputStream stream = MascotAnimator.class.getResourceAsStream(MascotSprites.SHEET_RESOURCE)) {
-            if (stream == null) {
-                throw new IllegalStateException(
-                        "Missing mascot spritesheet on classpath: " + MascotSprites.SHEET_RESOURCE);
+    private static Map<MascotState, List<Image>> loadFrames() {
+        Map<MascotState, List<Image>> images = new EnumMap<>(MascotState.class);
+        for (MascotState state : MascotState.values()) {
+            List<String> resources = MascotSprites.animationFor(state).frameResources();
+            List<Image> stateFrames = new ArrayList<>(resources.size());
+            for (String resource : resources) {
+                stateFrames.add(loadFrame(resource));
             }
-            return new Image(stream);
+            images.put(state, List.copyOf(stateFrames));
+        }
+        return Map.copyOf(images);
+    }
+
+    private static Image loadFrame(String resource) {
+        try (InputStream stream = MascotAnimator.class.getResourceAsStream(resource)) {
+            if (stream == null) {
+                throw new IllegalStateException("Missing mascot frame on classpath: " + resource);
+            }
+            Image image = new Image(stream);
+            if (image.isError()) {
+                throw new IllegalStateException("Could not load mascot frame: " + resource, image.getException());
+            }
+            return image;
         } catch (IOException e) {
-            throw new UncheckedIOException("Could not read mascot spritesheet", e);
+            throw new UncheckedIOException("Could not read mascot frame: " + resource, e);
         }
     }
 }
