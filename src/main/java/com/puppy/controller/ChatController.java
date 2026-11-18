@@ -1272,7 +1272,7 @@ public class ChatController {
                                      long elapsedMillis) {
         Message message = new Message(role, text, fileNames, elapsedMillis);
         currentMessages.add(message);
-        updateSelectedConversation();
+        updateSelectedConversation(true);
         refreshHistoryIfSelected();
         MessageBubble bubble = addMessageNode(message);
         scrollToBottom();
@@ -1280,6 +1280,10 @@ public class ChatController {
     }
 
     private void updateSelectedConversation() {
+        updateSelectedConversation(false);
+    }
+
+    private void updateSelectedConversation(boolean newMessage) {
         if (restoring || preparingToQuit) {
             return;
         }
@@ -1292,8 +1296,12 @@ public class ChatController {
             return;
         }
         Conversation existing = history.get(selectedHistoryIndex);
+        long updatedAt = newMessage
+                ? Math.max(System.currentTimeMillis(), history.stream()
+                        .mapToLong(Conversation::updatedAt).max().orElse(0L) + 1)
+                : existing.updatedAt();
         history.set(selectedHistoryIndex,
-                new Conversation(existing.id(), existing.title(), System.currentTimeMillis(), List.copyOf(currentMessages),
+                new Conversation(existing.id(), existing.title(), updatedAt, List.copyOf(currentMessages),
                         List.copyOf(attachments)));
         if (chatHistory != null) {
             Conversation snapshot = history.get(selectedHistoryIndex);

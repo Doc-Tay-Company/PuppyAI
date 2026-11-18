@@ -78,6 +78,9 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 - First user content (including an attachment) creates durable history; the last
   active conversation is restored. Titles are generated once from the first
   textual request, with a provisional title and visible warning on failure.
+- Sidebar ordering uses new-message activity only. Switching conversations,
+  saving cancellation/attachment snapshots, and closing/reopening Chat preserve
+  existing activity timestamps. Adding a message promotes that conversation.
 - Attachments restore from extracted text with filename-only paths. Original
   documents are not needed. Removing a chip removes stored text for that chat;
   historical filename labels are retained. Data and backups are unencrypted.

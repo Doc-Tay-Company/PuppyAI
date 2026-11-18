@@ -168,7 +168,9 @@ Use a local disk. Only one running Puppy instance can own a data directory.
 
 - Chat messages, reply timings, conversation attachments, Focus data/completion,
   model choice and always-on-top survive restart. The last active chat reopens;
-  history is ordered by recent activity. Greeting-only empty chats are not saved.
+  history is ordered by new-message activity. Switching conversations does not
+  reorder the sidebar; adding a message in an older chat moves it to the top.
+  Greeting-only empty chats are not saved.
 - New chats receive a provisional title, then one additional AI request asks the
   selected model to paraphrase the first request. It does not include attachments.
   Cloud titles may incur provider charges. Failure retains the provisional title

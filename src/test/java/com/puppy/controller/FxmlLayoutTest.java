@@ -389,6 +389,7 @@ class FxmlLayoutTest {
                 chatStage = findShowingStage("#historyPane");
                 assertTrue(chatStage.getScene().lookup("#historyPane").isVisible(),
                         "More should open session chat history");
+                assertHistoryChangesOrderOnlyForNewMessages(chatStage, services);
                 var savedHistory = services.chatHistory().flush();
                 awaitFx(savedHistory::isDone);
                 savedHistory.join();
@@ -426,6 +427,46 @@ class FxmlLayoutTest {
         }
         assertNull(failure.get(), "An FXML layout could not be loaded");
         Platform.exit();
+    }
+
+    private static void assertHistoryChangesOrderOnlyForNewMessages(Stage chatStage, ServiceRegistry services) {
+        VBox items = (VBox) chatStage.getScene().lookup("#historyItems");
+        String originalTitle = ((Button) items.getChildren().getFirst()).getText();
+        chatStage.getScene().getRoot().lookupAll(".quiet-button").stream()
+                .filter(Button.class::isInstance).map(Button.class::cast)
+                .filter(button -> "New".equals(button.getText())).findFirst().orElseThrow().fire();
+        @SuppressWarnings("unchecked")
+        ComboBox<ChatController.ComposerMode> mode =
+                (ComboBox<ChatController.ComposerMode>) chatStage.getScene().lookup("#modeChoice");
+        Button send = (Button) chatStage.getScene().lookup("#sendButton");
+        mode.setValue(ChatController.ComposerMode.HELP);
+        send.fire();
+        List<String> initialOrder = items.getChildren().stream().map(Button.class::cast).map(Button::getText).toList();
+        assertEquals(2, initialOrder.size());
+        assertEquals(originalTitle, initialOrder.getLast());
+        var originalActivity = services.chatHistory().conversations().stream().collect(
+                java.util.stream.Collectors.toMap(com.puppy.model.StoredConversation::id,
+                        com.puppy.model.StoredConversation::updatedAt));
+
+        ((Button) items.getChildren().getLast()).fire();
+        ((Button) items.getChildren().getFirst()).fire();
+        assertEquals(initialOrder, items.getChildren().stream().map(Button.class::cast).map(Button::getText).toList(),
+                "Switching to and away from an older conversation must not reorder the sidebar");
+        assertEquals(originalActivity, services.chatHistory().conversations().stream().collect(
+                java.util.stream.Collectors.toMap(com.puppy.model.StoredConversation::id,
+                        com.puppy.model.StoredConversation::updatedAt)),
+                "Navigation snapshots must preserve persisted message activity timestamps");
+
+        ((Button) items.getChildren().getLast()).fire();
+        mode.setValue(ChatController.ComposerMode.HELP);
+        send.fire();
+        assertEquals(originalTitle, ((Button) items.getChildren().getFirst()).getText(),
+                "A new message in an older conversation must move it to the top");
+        var promoted = services.chatHistory().conversations().getFirst();
+        assertTrue(promoted.updatedAt() > originalActivity.get(promoted.id()));
+        var other = services.chatHistory().conversations().getLast();
+        assertEquals(originalActivity.get(other.id()).longValue(), other.updatedAt(),
+                "Sending in another conversation must not change this conversation's activity");
     }
 
     private static void awaitFx(java.util.function.BooleanSupplier ready) {
