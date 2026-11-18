@@ -6,11 +6,14 @@ import com.puppy.enums.MascotState;
 import com.puppy.enums.MessageRole;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
+import com.puppy.model.FocusContext;
+import com.puppy.model.FocusEditResult;
 import com.puppy.model.FocusPlan;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.model.StoredMessage;
 import com.puppy.model.StoredConversation;
+import com.puppy.service.AiFocusPlanEditor;
 import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
 import com.puppy.service.FocusFormats;
@@ -71,11 +74,16 @@ import java.util.function.BooleanSupplier;
  */
 public class ChatController {
 
-    /** What the composer option does when Send is pressed. */
+    /**
+     * What the composer option does when Send is pressed.
+     *
+     * <p>Exactly one option is active at a time. The selected option stays
+     * active after a reply; choosing another option replaces it.</p>
+     */
     enum ComposerMode {
         CHAT("Chat"),
         FOCUS("Focus plan"),
-        MODEL("Model"),
+        ADJUST("Adjust plan"),
         HELP("Help");
 
         private final String label;
@@ -159,6 +167,7 @@ public class ChatController {
 
     private ChatService chatService;
     private FocusService focusService;
+    private AiFocusPlanEditor focusPlanEditor;
     private ExecutorService executor;
     private MascotStateService mascotStateService;
     private Runnable closeAction;
@@ -198,7 +207,8 @@ public class ChatController {
         loadChatMascot();
         modeChoice.getItems().setAll(ComposerMode.values());
         modeChoice.setValue(ComposerMode.CHAT);
-        modeChoice.setTooltip(new Tooltip("Choose what Send should do"));
+        modeChoice.setTooltip(new Tooltip(
+                "Choose what Send should do; it stays selected until you choose another option"));
         attachButton.setTooltip(new Tooltip("Attach a document"));
         streamTicker = new Timeline(new KeyFrame(STREAM_TICK, event -> flushPendingTokens()));
         streamTicker.setCycleCount(Timeline.INDEFINITE);
@@ -225,6 +235,7 @@ public class ChatController {
         this.executor = Objects.requireNonNull(executor, "executor");
         this.mascotStateService = Objects.requireNonNull(mascotStateService, "mascotStateService");
         this.focusService = Objects.requireNonNull(focusService, "focusService");
+        this.focusPlanEditor = new AiFocusPlanEditor(chatService.modelService());
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
         this.minimizeAction = Objects.requireNonNull(minimizeAction, "minimizeAction");
         this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
@@ -267,34 +278,50 @@ public class ChatController {
         messageInput.clear();
         stopMascotReaction();
 
-        if (pendingFocus != null && mode == ComposerMode.CHAT && !message.isEmpty()
-                && !message.startsWith("/")) {
+        if (pendingFocus != null && !message.isEmpty() && !message.startsWith("/")) {
             answerPendingFocus(message);
-            resetComposerMode();
+            messageInput.requestFocus();
+            return;
+        }
+
+        // Slash commands work regardless of the selected feature, so `/model`
+        // and `/help` never get treated as a Focus description.
+        if (message.startsWith("/") && handleLocalCommand(message)) {
             messageInput.requestFocus();
             return;
         }
 
         switch (mode) {
             case FOCUS -> {
-                if (startFocus(message)) {
-                    resetComposerMode();
-                }
+                startFocus(message);
                 messageInput.requestFocus();
             }
-            case MODEL -> {
-                answerLocalCommand(ComposerMode.MODEL, modelCommandReply());
-                resetComposerMode();
+            case ADJUST -> {
+                startAdjustPlan(message);
                 messageInput.requestFocus();
             }
             case HELP -> {
                 answerLocalCommand(ComposerMode.HELP, helpReply());
-                resetComposerMode();
                 messageInput.requestFocus();
             }
             case CHAT -> {
                 String chatMessage = message.isEmpty() ? ATTACHMENT_ONLY_PROMPT : message;
-                if (handleLocalCommand(chatMessage)) {
+                boolean hasPlan = focusService != null && !focusService.sessions().isEmpty();
+                if (hasPlan && isPlanDropSubjectIntent(chatMessage, focusService.subjects())) {
+                    addMessage("user", chatMessage, List.of());
+                    if (handleDropSubject(chatMessage)) {
+                        return;
+                    }
+                }
+                if (hasPlan && (isPlanHorizonIntent(chatMessage) || isPlanPriorityIntent(chatMessage, focusService.subjects()))) {
+                    addMessage("user", chatMessage, List.of());
+                    if (adjustPlanHorizonOrPriority(chatMessage)) {
+                        return;
+                    }
+                }
+                if (hasPlan && isPlanEditIntent(chatMessage, focusService.sessions())) {
+                    addMessage("user", chatMessage, List.of());
+                    startEditFocus(chatMessage);
                     messageInput.requestFocus();
                     return;
                 }
@@ -364,12 +391,6 @@ public class ChatController {
         scrollToBottom();
     }
 
-    private void resetComposerMode() {
-        if (modeChoice != null) {
-            modeChoice.setValue(ComposerMode.CHAT);
-        }
-    }
-
     /**
      * Handles slash commands before a request reaches the model. The command
      * output is a normal assistant message, so it stays in the session history.
@@ -406,20 +427,23 @@ public class ChatController {
         return """
                 **Puppy options**
 
-                Choose an option next to the message box, then press Send.
+                Choose one option next to the message box, then press Send. The option
+                stays selected until you choose another one.
 
                 - **Focus plan** - read your pinned files or typed subject description
-                - **Model** - show the selected model and provider
+                - **Adjust plan** - change times, durations or subjects in the saved plan
                 - **Help** - show this list
 
                 **Chat** sends everything else to the selected model.
+                Type **/model** to see the selected model and provider.
 
                 Right-click a message to copy it, or use **Copy** / **Reuse** under your
                 requests. **Ctrl+V** pastes into the message box.
 
                 Switch between cloud and local models in **More > Settings**.
-                Puppy chooses **Quick** or **Deep** focus from your description: subjects
-                that are important, difficult or need more time become Deep focus.
+                Puppy gives every subject a review session and adds 50% extra time
+                (at least 30 minutes) to subjects you say are important, difficult or
+                need more time, so the other subjects are still scheduled.
                 A focus plan covers one week by default; say **in 10 days** or
                 **deadline 20/11** to choose a different end date.""";
     }
@@ -476,10 +500,33 @@ public class ChatController {
                 .toList();
         addMessage("user", typed.isEmpty() ? "Focus plan" : typed, fileNames);
 
+        boolean hasExistingPlan = !focusService.sessions().isEmpty();
+        boolean hasAttachments = !attachments.isEmpty();
+        if (hasExistingPlan && !hasAttachments && isPlanDropSubjectIntent(typed, focusService.subjects())) {
+            if (handleDropSubject(typed)) {
+                return true;
+            }
+        }
+        if (hasExistingPlan && !hasAttachments && (isPlanHorizonIntent(typed) || isPlanPriorityIntent(typed, focusService.subjects()))) {
+            if (adjustPlanHorizonOrPriority(typed)) {
+                return true;
+            }
+        }
+        if (hasExistingPlan && !hasAttachments && isPlanEditIntent(typed, focusService.sessions())) {
+            return startEditFocus(typed);
+        }
+
         Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(typed);
         LocalDate planUntil = FocusFormats.parsePlanEnd(typed, LocalDate.now()).orElse(null);
         if (window.isPresent()) {
             applyFreeTime(window.get().withPlanUntil(planUntil));
+            return startFocusDocuments(typed);
+        }
+
+        if (focusService.preferencesConfigured()) {
+            // The user already chose a window; reuse it instead of asking again.
+            FocusPreferences existing = focusService.preferences();
+            applyFreeTime(existing.withPlanUntil(planUntil));
             return startFocusDocuments(typed);
         }
 
@@ -547,7 +594,8 @@ public class ChatController {
                     .append(FocusFormats.formatDate(window.planUntil()))
                     .append("**");
         }
-        confirmation.append(".");
+        confirmation.append(". Say **change time to 18:00-22:00** or use "
+                + "**Change time** in Focus Planner to update it.");
         addMessage("assistant", confirmation.toString(), List.of());
     }
 
@@ -654,8 +702,9 @@ public class ChatController {
                 Pin your timetable, subject list or assignment sheet with the 📌 button, or type
                 the subjects you want planned. Then choose **Focus plan** and press Send.
 
-                Tell me how the subject feels - important, difficult, or not fully mastered -
-                and I'll book longer Deep focus sessions. Light review and reading stay Quick.
+                Tell me which subject needs more time - important, difficult, or not fully
+                mastered - and I'll lengthen its tasks without dropping the other subjects.
+                Light review and reading stay Quick.
                 If you don't mention a free-time window, I'll ask for one before planning.
                 Say **in 3 days**, **for 2 weeks** or **deadline 20/11** to set the plan
                 end; otherwise the plan covers one week.
@@ -698,6 +747,363 @@ public class ChatController {
         scrollToBottom();
         mascotStateService.resetToIdle();
         messageInput.requestFocus();
+    }
+
+    /**
+     * The explicit "Adjust plan" composer mode: describe a change in natural
+     * language and let the AI plan editor turn it into structured edits.
+     */
+    private void startAdjustPlan(String message) {
+        String typed = message == null ? "" : message.strip();
+        List<String> fileNames = attachments.stream()
+                .map(DocumentAttachment::fileName)
+                .toList();
+
+        if (focusService == null) {
+            addMessage("user", typed.isEmpty() ? "Adjust plan" : typed, fileNames);
+            addMessage("assistant",
+                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+            scrollToBottom();
+            return;
+        }
+
+        boolean hasPlan = !focusService.sessions().isEmpty();
+        if (!hasPlan) {
+            addMessage("user", typed.isEmpty() ? "Adjust plan" : typed, fileNames);
+            addMessage("assistant", """
+                    **There is no plan to adjust yet**
+
+                    Choose **Focus plan** to build one from your files or a description
+                    first, then use **Adjust plan** to move, resize or rename sessions.""",
+                    List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return;
+        }
+        if (typed.isEmpty()) {
+            addMessage("user", "Adjust plan", fileNames);
+            addMessage("assistant", adjustHelpText(), List.of());
+            scrollToBottom();
+            mascotStateService.resetToIdle();
+            return;
+        }
+
+        addMessage("user", typed, fileNames);
+        startEditFocus(typed);
+    }
+
+    private static String adjustHelpText() {
+        return """
+                **Adjust your focus plan**
+
+                Choose **Adjust plan**, describe the change, then press Send. For example:
+
+                - "Move Math to tomorrow at 19:00"
+                - "Make the Physics sessions 75 minutes"
+                - "Change Wednesday's session to Chemistry"
+                - "Delete the Friday review"
+                - "Add a Deep focus Chemistry session on Saturday at 9:00"
+                - "My free time is 18:00-22:00 from now on"
+
+                Every change is checked against your classes, your free-time
+                window and the rest of the plan before it is saved. You can undo
+                the last change in **Focus Planner**.""";
+    }
+
+    private boolean startEditFocus(String description) {
+        responding = true;
+        thinkingLabel.setManaged(true);
+        thinkingLabel.setVisible(true);
+        updateComposerState();
+        mascotStateService.setState(MascotState.THINKING);
+
+        int generation = ++responseGeneration;
+        java.util.concurrent.CompletableFuture<Void> savedRequest = latestSave;
+        try {
+            inFlight = executor.submit(() -> {
+                try {
+                    savedRequest.join();
+                    if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
+                        return;
+                    }
+                    FocusContext context = new FocusContext(
+                            focusService.currentPlan(),
+                            focusService.classes(),
+                            focusService.preferences(),
+                            focusService.preferencesConfigured());
+                    FocusEditResult result = focusPlanEditor.edit(context, description);
+
+                    if (!result.isEmpty()) {
+                        focusService.applyEdits(result.actions());
+                    }
+                    Platform.runLater(() -> completeFocusEdit(generation, result));
+                } catch (FocusPlanningException e) {
+                    String message = e.getMessage() == null || e.getMessage().isBlank()
+                            ? "I couldn't edit the plan based on your request."
+                            : e.getMessage();
+                    Platform.runLater(() -> failFocusCommand(generation, message));
+                } catch (RuntimeException e) {
+                    Platform.runLater(() -> failFocusCommand(generation,
+                            "Something went wrong while editing your plan. Please try again."));
+                } finally {
+                    Thread.interrupted();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            responding = false;
+            inFlight = null;
+            thinkingLabel.setManaged(false);
+            thinkingLabel.setVisible(false);
+            updateComposerState();
+            addMessage("assistant",
+                    "I couldn't edit the plan because the application is shutting down.",
+                    List.of());
+            mascotStateService.resetToIdle();
+            return false;
+        }
+        return true;
+    }
+
+    private void completeFocusEdit(int generation, FocusEditResult result) {
+        if (generation != responseGeneration || !responding) {
+            return;
+        }
+        StringBuilder reply = new StringBuilder();
+        if (!result.summary().isBlank()) {
+            reply.append(result.summary());
+        } else {
+            reply.append("I've updated your focus plan according to your request.");
+        }
+        FocusPlan plan = focusService.currentPlan();
+        if (!result.isEmpty()) {
+            reply.append("\n\n").append(focusPlanSummary(plan));
+        }
+
+        addMessage("assistant", reply.toString().strip(), List.of());
+        responding = false;
+        inFlight = null;
+        thinkingLabel.setManaged(false);
+        thinkingLabel.setVisible(false);
+        updateComposerState();
+        scrollToBottom();
+        mascotStateService.setState(MascotState.TALKING);
+        talkingTransition.playFromStart();
+        Platform.runLater(focusOpenAction);
+        messageInput.requestFocus();
+    }
+
+    static boolean isPlanHorizonIntent(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String normalized = FocusFormats.normalize(text);
+        return normalized.contains("keo dai")
+                || normalized.contains("rut ngan")
+                || normalized.contains("thoi han")
+                || normalized.contains("extend")
+                || normalized.contains("shorten")
+                || normalized.contains("horizon")
+                || (normalized.contains("ke hoach") && (normalized.contains("ngay") || normalized.contains("tuan") || normalized.contains("thang")))
+                || (normalized.contains("plan") && (normalized.contains("day") || normalized.contains("week") || normalized.contains("month")));
+    }
+
+    static List<String> extractPrioritySubjects(String message, List<String> availableSubjects) {
+        if (message == null || message.isBlank() || availableSubjects == null || availableSubjects.isEmpty()) {
+            return List.of();
+        }
+        String normalized = FocusFormats.normalize(message);
+        boolean hasPriorityKeyword = normalized.contains("uu tien")
+                || normalized.contains("don thoi gian")
+                || normalized.contains("tap trung")
+                || normalized.contains("danh nhieu thoi gian")
+                || normalized.contains("priorit")
+                || normalized.contains("more time")
+                || normalized.contains("focus on");
+        if (!hasPriorityKeyword) {
+            return List.of();
+        }
+        List<String> matched = new ArrayList<>();
+        for (String subject : availableSubjects) {
+            String normSubject = FocusFormats.normalize(subject);
+            if (!normSubject.isBlank() && normalized.contains(normSubject)) {
+                matched.add(subject);
+            }
+        }
+        return matched;
+    }
+
+    static boolean isPlanPriorityIntent(String text, List<String> availableSubjects) {
+        return !extractPrioritySubjects(text, availableSubjects).isEmpty();
+    }
+
+    static List<String> extractDroppedSubjects(String message, List<String> availableSubjects) {
+        if (message == null || message.isBlank() || availableSubjects == null || availableSubjects.isEmpty()) {
+            return List.of();
+        }
+        String normalized = FocusFormats.normalize(message);
+        boolean hasDropKeyword = normalized.contains("bo mon")
+                || normalized.contains("xoa mon")
+                || normalized.contains("khong hoc mon")
+                || normalized.contains("loai bo mon")
+                || normalized.contains("drop subject")
+                || normalized.contains("remove subject")
+                || normalized.contains("exclude");
+        if (!hasDropKeyword) {
+            for (String subject : availableSubjects) {
+                String normSubject = FocusFormats.normalize(subject);
+                if (normalized.matches(".*\\b(?:bo|xoa|drop|remove)\\s+" + java.util.regex.Pattern.quote(normSubject) + "\\b.*")) {
+                    return List.of(subject);
+                }
+            }
+            return List.of();
+        }
+        List<String> matched = new ArrayList<>();
+        for (String subject : availableSubjects) {
+            String normSubject = FocusFormats.normalize(subject);
+            if (!normSubject.isBlank() && normalized.contains(normSubject)) {
+                matched.add(subject);
+            }
+        }
+        return matched;
+    }
+
+    static boolean isPlanDropSubjectIntent(String text, List<String> availableSubjects) {
+        return !extractDroppedSubjects(text, availableSubjects).isEmpty();
+    }
+
+    private boolean handleDropSubject(String message) {
+        List<String> dropped = extractDroppedSubjects(message, focusService.subjects());
+        if (dropped.isEmpty()) {
+            return false;
+        }
+        for (String subject : dropped) {
+            focusService.dropSubject(subject);
+        }
+        FocusPlan newPlan = focusService.currentPlan();
+        StringBuilder reply = new StringBuilder();
+        reply.append("Đã loại bỏ môn **")
+                .append(String.join(", ", dropped))
+                .append("** khỏi kế hoạch học tập. Các buổi học còn lại đã được sắp xếp lại tối ưu.\n\n");
+        reply.append(focusPlanSummary(newPlan));
+        addMessage("assistant", reply.toString().strip(), List.of());
+        Platform.runLater(focusOpenAction);
+        mascotStateService.setState(MascotState.TALKING);
+        talkingTransition.playFromStart();
+        messageInput.requestFocus();
+        return true;
+    }
+
+    private boolean adjustPlanHorizonOrPriority(String message) {
+        List<String> subjectsToPrioritize = extractPrioritySubjects(message, focusService.subjects());
+        for (String subject : subjectsToPrioritize) {
+            focusService.prioritizeSubject(subject);
+        }
+
+        LocalDate today = LocalDate.now();
+        Optional<FocusFormats.PlanDateRange> dateRange = FocusFormats.parsePlanDateRange(message, today);
+        LocalDate newFrom = null;
+        LocalDate newEnd = null;
+
+        if (dateRange.isPresent()) {
+            newFrom = dateRange.get().from();
+            newEnd = dateRange.get().until();
+        } else {
+            Optional<LocalDate> targetEnd = FocusFormats.parsePlanEnd(message, today);
+            if (targetEnd.isEmpty()) {
+                String normalized = FocusFormats.normalize(message);
+                java.util.regex.Matcher relativeDays = java.util.regex.Pattern.compile(
+                        ".*\\b(?:them|add|extend)\\s+(\\d{1,3})\\s*(?:ngay|days?)\\b.*").matcher(normalized);
+                if (relativeDays.matches()) {
+                    long daysToAdd = Long.parseLong(relativeDays.group(1));
+                    LocalDate latest = focusService.sessions().stream()
+                            .map(FocusSession::date)
+                            .max(LocalDate::compareTo)
+                            .orElse(today);
+                    targetEnd = Optional.of(latest.plusDays(daysToAdd));
+                }
+            }
+            newEnd = targetEnd.orElse(null);
+        }
+
+        if (newFrom != null || newEnd != null) {
+            FocusPreferences updatedPref = focusService.preferences();
+            if (newFrom != null && newEnd != null) {
+                updatedPref = updatedPref.withPlanScope(newFrom, newEnd);
+            } else if (newEnd != null) {
+                updatedPref = updatedPref.withPlanUntil(newEnd);
+            } else {
+                updatedPref = updatedPref.withPlanFrom(newFrom);
+            }
+            focusService.setPreferences(updatedPref);
+        }
+
+        if (newFrom != null || newEnd != null || !subjectsToPrioritize.isEmpty()) {
+            FocusPlan newPlan = focusService.generatePlan();
+
+            StringBuilder reply = new StringBuilder();
+            if (newFrom != null && newEnd != null && !subjectsToPrioritize.isEmpty()) {
+                reply.append("Đã điều chỉnh kế hoạch học tập: từ ngày **")
+                        .append(FocusFormats.formatDate(newFrom))
+                        .append("** đến ngày **")
+                        .append(FocusFormats.formatDate(newEnd))
+                        .append("** và ưu tiên môn **")
+                        .append(String.join(", ", subjectsToPrioritize))
+                        .append("**.\n\n");
+            } else if (newFrom != null && newEnd != null) {
+                reply.append("Đã điều chỉnh kế hoạch học tập từ ngày **")
+                        .append(FocusFormats.formatDate(newFrom))
+                        .append("** đến ngày **")
+                        .append(FocusFormats.formatDate(newEnd))
+                        .append("**.\n\n");
+            } else if (newEnd != null && !subjectsToPrioritize.isEmpty()) {
+                reply.append("Đã điều chỉnh kế hoạch học tập: kết thúc vào ngày **")
+                        .append(FocusFormats.formatDate(newEnd))
+                        .append("** và ưu tiên môn **")
+                        .append(String.join(", ", subjectsToPrioritize))
+                        .append("**.\n\n");
+            } else if (newEnd != null) {
+                reply.append("Đã điều chỉnh kế hoạch học tập kết thúc vào ngày **")
+                        .append(FocusFormats.formatDate(newEnd))
+                        .append("**.\n\n");
+            } else {
+                reply.append("Đã ưu tiên môn **")
+                        .append(String.join(", ", subjectsToPrioritize))
+                        .append("** trong kế hoạch học tập.\n\n");
+            }
+            reply.append(focusPlanSummary(newPlan));
+
+            addMessage("assistant", reply.toString().strip(), List.of());
+            Platform.runLater(focusOpenAction);
+            mascotStateService.setState(MascotState.TALKING);
+            talkingTransition.playFromStart();
+            messageInput.requestFocus();
+            return true;
+        }
+        return false;
+    }
+
+    private boolean adjustPlanHorizon(String message) {
+        return adjustPlanHorizonOrPriority(message);
+    }
+
+    static boolean isPlanEditIntent(String text, List<FocusSession> sessions) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String normalized = FocusFormats.normalize(text);
+        boolean hasEditKeyword = normalized.matches(".*\\b(doi|chuyen|chinh|sua|xoa|bo|huy|them|lui|day|hoan|dat lai)\\b.*")
+                || normalized.matches(".*\\b(edit|change|reschedule|move|shift|update|modify|delete|remove|cancel|add|adjust)\\b.*")
+                || normalized.contains("doi gio")
+                || normalized.contains("doi lich")
+                || normalized.contains("chinh sua")
+                || normalized.contains("thay doi");
+        if (hasEditKeyword) {
+            return true;
+        }
+        boolean mentionsSubject = sessions != null && sessions.stream()
+                .anyMatch(s -> normalized.contains(FocusFormats.normalize(s.subject())));
+        boolean mentionsTime = normalized.matches(".*\\b(\\d{1,2}\\s*(?:h|:|gio|am|pm))\\b.*");
+        return mentionsSubject && mentionsTime;
     }
 
     private static String focusPlanSummary(FocusPlan plan) {
@@ -757,7 +1163,8 @@ public class ChatController {
     private void streamReply(int generation, List<ChatMessage> conversation,
                              List<DocumentAttachment> documents, long startedAtNanos) {
         try {
-            String reply = chatService.reply(conversation, documents,
+            FocusPlan plan = focusService != null ? focusService.currentPlan() : null;
+            String reply = chatService.reply(conversation, documents, plan,
                     token -> enqueueToken(generation, token));
             long elapsedMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
             Platform.runLater(() -> completeReply(generation, reply, elapsedMillis));
@@ -1173,7 +1580,6 @@ public class ChatController {
         attachments.clear();
         updateAttachmentBar();
         hideAttachmentStatus();
-        resetComposerMode();
         addMessage("assistant", greeting(), List.of());
         refreshHistory();
         scrollToBottom();
@@ -1223,7 +1629,6 @@ public class ChatController {
         attachments.addAll(conversation.attachments());
         updateAttachmentBar();
         hideAttachmentStatus();
-        resetComposerMode();
         renderMessages();
         refreshHistory();
         updateComposerState();

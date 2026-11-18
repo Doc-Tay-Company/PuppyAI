@@ -130,6 +130,73 @@ class FocusPlannerTest {
     }
 
     @Test
+    void finishesTheFirstPassForEverySubjectBeforeAnySecondSession() {
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(
+                        task("Alpha", "Read notes", FocusType.QUICK,
+                                50, null, Priority.MEDIUM),
+                        task("Beta", "Review lecture", FocusType.QUICK,
+                                50, null, Priority.MEDIUM),
+                        task("Gamma", "Flashcards", FocusType.QUICK,
+                                50, null, Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input, preferences(8, 0, 12, 0), NOW);
+
+        assertEquals(List.of("Alpha", "Beta", "Gamma", "Alpha", "Beta", "Gamma"),
+                plan.sessions().stream().map(FocusSession::subject).toList(),
+                "Second sessions must wait until every subject had a first one");
+    }
+
+    @Test
+    void rotatesTheStartingSubjectEachDay() {
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(
+                        task("Alpha", "Read notes", FocusType.QUICK,
+                                50, null, Priority.MEDIUM),
+                        task("Beta", "Review lecture", FocusType.QUICK,
+                                50, null, Priority.MEDIUM),
+                        task("Gamma", "Flashcards", FocusType.QUICK,
+                                50, null, Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input, preferences(8, 0, 9, 0), NOW);
+
+        Map<LocalDate, String> firstSubjectByDay = new java.util.LinkedHashMap<>();
+        for (FocusSession session : plan.sessions()) {
+            firstSubjectByDay.putIfAbsent(session.date(), session.subject());
+        }
+        assertEquals(List.of("Alpha", "Beta", "Gamma"),
+                List.copyOf(firstSubjectByDay.values()),
+                "Each day should start with a different subject");
+    }
+
+    @Test
+    void capsOneSubjectAtHalfTheDailyFreeTimeWhileAnotherSubjectWaits() {
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(
+                        task("Alpha", "Deep work", FocusType.DEEP,
+                                150, null, Priority.MEDIUM),
+                        task("Beta", "Deep review", FocusType.DEEP,
+                                50, null, Priority.MEDIUM)));
+
+        FocusPlan plan = planner.plan(input, preferences(8, 0, 11, 0), NOW);
+
+        long alphaOnFirstDay = plan.sessions().stream()
+                .filter(session -> session.date().equals(TODAY))
+                .filter(session -> session.subject().equals("Alpha"))
+                .count();
+        long betaOnFirstDay = plan.sessions().stream()
+                .filter(session -> session.date().equals(TODAY))
+                .filter(session -> session.subject().equals("Beta"))
+                .count();
+        assertEquals(1, alphaOnFirstDay,
+                "Alpha may not take a second session while Beta still needs time");
+        assertEquals(1, betaOnFirstDay);
+    }
+
+    @Test
     void limitsEachSubjectToTwoSessionsPerDay() {
         FocusPlannerInput input = new FocusPlannerInput(
                 List.of(),
@@ -244,6 +311,87 @@ class FocusPlannerTest {
         assertTrue(plan.warnings().stream()
                         .anyMatch(warning -> warning.contains("could not be placed")),
                 "Work beyond the requested end should be reported: " + plan.warnings());
+    }
+
+    @Test
+    void prioritizedSubjectReceivesExtraSessionsInPassThreeAndFitsShortHorizon() {
+        LocalDate planEnd = TODAY.plusDays(1); // 2 days only
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        200, TODAY.plusDays(10), Priority.MEDIUM)),
+                List.of("Math")); // Math is prioritized!
+
+        FocusPlan plan = planner.plan(input,
+                preferences(8, 0, 22, 0, planEnd), NOW);
+
+        assertEquals(8, plan.sessions().size(),
+                "All 8 chunks (200 minutes) should fit inside 2 days because Math is prioritized");
+        assertTrue(plan.sessions().stream()
+                        .allMatch(session -> !session.date().isAfter(planEnd)),
+                "All sessions must be within the shortened horizon");
+        assertTrue(plan.warnings().isEmpty(),
+                "No unplaced minutes warning should be produced for prioritized subject: " + plan.warnings());
+    }
+
+    @Test
+    void highPriorityTaskSubjectReceivesExtraSessionsAndFitsShortHorizon() {
+        LocalDate planEnd = TODAY.plusDays(1); // 2 days only
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        200, TODAY.plusDays(10), Priority.HIGH))); // High priority task!
+
+        FocusPlan plan = planner.plan(input,
+                preferences(8, 0, 22, 0, planEnd), NOW);
+
+        assertEquals(8, plan.sessions().size(),
+                "All 8 chunks should fit inside 2 days because task priority is HIGH");
+        assertTrue(plan.warnings().isEmpty(),
+                "No warning should occur for high priority task");
+    }
+
+    @Test
+    void prioritizedSubjectSharesTimeWithOtherSubjectsThenUsesRemainingFreeTime() {
+        LocalDate planEnd = TODAY.plusDays(1); // 2 days
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(
+                        task("English", "Reading", FocusType.QUICK,
+                                50, TODAY.plusDays(10), Priority.MEDIUM),
+                        task("Math", "Practice", FocusType.QUICK,
+                                150, TODAY.plusDays(10), Priority.MEDIUM)),
+                List.of("Math")); // Math is prioritized
+
+        FocusPlan plan = planner.plan(input,
+                preferences(8, 0, 22, 0, planEnd), NOW);
+
+        // English has 2 chunks (50 min) -> 2 sessions
+        // Math has 6 chunks (150 min) -> 6 sessions
+        // Total = 8 sessions
+        assertEquals(8, plan.sessions().size(), "Both English and prioritized Math should be placed fully");
+        assertTrue(plan.warnings().isEmpty(), "No warnings when free time is sufficient");
+    }
+
+    @Test
+    void schedulesSessionsStartingFromCustomPlanFromDate() {
+        LocalDate startFrom = TODAY.plusDays(3);
+        LocalDate planUntil = TODAY.plusDays(5);
+        FocusPlannerInput input = new FocusPlannerInput(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        100, TODAY.plusDays(10), Priority.MEDIUM)));
+
+        FocusPreferences prefs = new FocusPreferences(time(8, 0), time(22, 0), startFrom, planUntil);
+        FocusPlan plan = planner.plan(input, prefs, NOW);
+
+        assertFalse(plan.sessions().isEmpty(), "Plan should have sessions");
+        assertTrue(plan.sessions().stream()
+                        .allMatch(session -> !session.date().isBefore(startFrom)),
+                "No session should start before startFrom: " + plan.sessions());
+        assertTrue(plan.sessions().stream()
+                        .allMatch(session -> !session.date().isAfter(planUntil)),
+                "No session should start after planUntil: " + plan.sessions());
     }
 
     private static FocusPreferences preferences(int fromHour, int fromMinute,

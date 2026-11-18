@@ -127,6 +127,8 @@ class FocusFormatsTest {
         assertEquals(TODAY, FocusFormats.parsePlanEnd("hôm nay", TODAY).orElseThrow());
         assertEquals(TODAY.plusDays(1),
                 FocusFormats.parsePlanEnd("ngày mai", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2026, 11, 25),
+                FocusFormats.parsePlanEnd("kéo dài kế hoạch đến ngày 25", TODAY).orElseThrow());
     }
 
     @Test
@@ -170,5 +172,40 @@ class FocusFormatsTest {
     void formatsTimesAndDatesForThePanel() {
         assertEquals("18:05", FocusFormats.formatTime(LocalTime.of(18, 5)));
         assertEquals("Mon 16 Nov", FocusFormats.formatDate(TODAY));
+    }
+
+    @Test
+    void parsesPlanDateRangeFromText() {
+        // TODAY is 2026-11-16
+        var range1 = FocusFormats.parsePlanDateRange("kế hoạch từ ngày 20 đến ngày 25", TODAY);
+        assertTrue(range1.isPresent());
+        assertEquals(LocalDate.of(2026, 11, 20), range1.get().from());
+        assertEquals(LocalDate.of(2026, 11, 25), range1.get().until());
+
+        var range2 = FocusFormats.parsePlanDateRange("từ 20/11 đến 25/11", TODAY);
+        assertTrue(range2.isPresent());
+        assertEquals(LocalDate.of(2026, 11, 20), range2.get().from());
+        assertEquals(LocalDate.of(2026, 11, 25), range2.get().until());
+
+        var range3 = FocusFormats.parsePlanDateRange("from 2026-11-20 to 2026-11-25", TODAY);
+        assertTrue(range3.isPresent());
+        assertEquals(LocalDate.of(2026, 11, 20), range3.get().from());
+        assertEquals(LocalDate.of(2026, 11, 25), range3.get().until());
+    }
+
+    @Test
+    void parsesSingleDayWithoutJumpingMonthUnlessExplicitlyRequested() {
+        // TODAY is 2026-11-16
+        // When user asks "đến ngày 25" -> should be 2026-11-25
+        assertEquals(LocalDate.of(2026, 11, 25),
+                FocusFormats.parsePlanEnd("kế hoạch đến ngày 25", TODAY).orElseThrow());
+
+        // When user asks "ngày 10" (past day in November without "tháng sau") -> clamped to TODAY, not Dec 10!
+        assertEquals(TODAY,
+                FocusFormats.parsePlanEnd("kế hoạch ngày 10", TODAY).orElseThrow());
+
+        // When user explicitly asks "đến ngày 25 tháng sau" -> jumps to Dec 25
+        assertEquals(LocalDate.of(2026, 12, 25),
+                FocusFormats.parsePlanEnd("đến ngày 25 tháng sau", TODAY).orElseThrow());
     }
 }

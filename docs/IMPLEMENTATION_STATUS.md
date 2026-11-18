@@ -84,7 +84,7 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 - SQLite uses a per-directory OS lock, serialized connection access, foreign
   keys, five-second busy timeout, FULL synchronization, rollback journaling and
   `secure_delete`. Backups/snapshots/SSD remnants are outside its erasure control.
-- Verification: **`mvn -q test` - 127 tests, 0 failures, 0 errors, 0 skipped**.
+- Verification: **`mvn -q test` - 183 tests, 0 failures, 0 errors, 0 skipped**.
   Includes real temporary-database reopen, actual UI-created history round-trip,
   second-instance lock rejection, interrupted-reply recovery, transactional
   rollback, migration backup/failure/newer-version rejection, atomic legacy
@@ -142,7 +142,11 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 - `ChatPromptBuilder` already supplies a fixed Puppy persona, document rules
   and bounded history in one leading system message. `AiFocusPlanExtractor` has
   its own fixed JSON contract. Both providers support `ModelService.jsonChat`.
-- Chat offers Chat / Focus plan / Model / Help. No quiz domain, service,
+- Chat offers Chat / Focus plan / Adjust plan / Help. The selected option stays
+  active after every reply and choosing another option replaces it; Model is
+  available through the `/model` command. Adjust plan applies validated,
+  all-or-nothing MOVE / RESIZE / REMOVE / CHANGE_SUBJECT / ADD / SET_WINDOW edits
+  and the last change can be undone in Focus Planner. No quiz domain, service,
   generation/parser, interactive card or persistence exists. Study is currently
   a Pomodoro timer, not a quiz engine.
 - Existing coverage includes provider clients, settings, bounded prompts,
@@ -300,7 +304,7 @@ suggested sequence, determine what can proceed independently.
   do not accidentally persist them as generic chat messages or score summaries.
 - Count/difficulty are supplied naturally in Chat, not a separate setup form.
   Requests can assign different difficulties to different questions. Existing
-  Chat, Focus plan, Model, Help, Copy/Reuse and Markdown behavior remain intact.
+  Chat, Focus plan, Help, Copy/Reuse and Markdown behavior remain intact.
 - Follow existing cancellation behavior for generation on close/chat switch;
   late callbacks cannot attach a quiz to the wrong conversation. Test local and
   cloud generation manually without including private content or keys in logs.
@@ -464,7 +468,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
   offline cache, failed-refresh preservation and keeping a saved model that left
   the catalog. `FxmlLayoutTest` verifies the picker labels, masked key field,
   key-section visibility for cloud versus local, and Settings fit. The suite is
-  137 tests, 0 failures.
+  183 tests, 0 failures.
 
 ## Completed (mascot and chat polish)
 
@@ -498,9 +502,11 @@ progress or scores is intentionally excluded, not a missing persistence task.
   **Copy** and **Reuse** actions under the bubble; Copy briefly changes to
   “Copied”, and Reuse restores the exact request to the composer without sending
   it. Normal clipboard paste (**Ctrl+V**) remains available in the message box.
-- **Commands:** an option beside the message box replaces typed slash commands:
-  **Chat**, **Focus plan**, **Model** and **Help**. Model and Help answer
-  locally. The 📌 button attaches documents, and the new-chat greeting ends at
+- **Commands:** an option beside the message box selects what Send should do:
+  **Chat**, **Focus plan** or **Help**. The selected option stays active after
+  every reply and choosing another one replaces it, so it never has to be
+  reselected. Help answers locally; `/model` still shows the selected model and
+  provider. The 📌 button attaches documents, and the new-chat greeting ends at
   “Ask me anything.” Focus has no Quick/Deep selector; Puppy infers the type
   from the description and asks for a free-time window when one is missing.
 - **Tests:** `MascotMessagesTest`, Markdown rendering and composer-option
@@ -516,8 +522,12 @@ progress or scores is intentionally excluded, not a missing persistence task.
   and is not exposed in the UI.
 - **Deterministic planning:** `FocusPlanner` schedules only inside the daily free
   window (default 08:00–22:00), subtracts weekly class times, respects
-  deadlines, leaves 10-minute gaps, caps each subject at two sessions per day,
-  and round-robins subjects for fairness. The horizon defaults to one week, uses
+  deadlines, leaves 10-minute gaps, and queues work per subject. Pass 1 gives
+  each subject at most one session per day; pass 2 allows a second session only
+  after every subject had a first one. The starting subject rotates each day,
+  each subject stays at two sessions per day, and while several subjects still
+  need time a second session may not push a subject past half of that day's
+  free window. The horizon defaults to one week, uses
   the latest task deadline when it is later, and honors an explicit plan end
   such as `trong 3 ngày`, `2 tuần`, `1 tháng`, `deadline 20/11` or `trước
   2026-12-01`; the horizon is capped at 365 days. Today's first session starts at
@@ -536,12 +546,17 @@ progress or scores is intentionally excluded, not a missing persistence task.
   occurrence, and explicit dates win over duration text.
 - **Model extraction:** `AiFocusPlanExtractor` asks the selected model for
   strict JSON through `ChatProvider.jsonChat` (Ollama `format: json`, OpenRouter
-  `response_format: json_object`, low temperature). `FocusJsonParser`
-  accepts fenced/prefaced JSON, skips invalid rows with notes, and creates
-  review tasks when the text lists only subjects.
+  `response_format: json_object`, low temperature). The model returns
+  `moreTimeSubjects` separately from tasks, so "needs more time" is an
+  adjustment rather than invented work. `FocusJsonParser` accepts
+  fenced/prefaced JSON, skips invalid rows with notes, creates a review task for
+  every listed subject even when explicit tasks exist, and accepts both the
+  dedicated extra-time array and a per-subject flag.
 - **Application service:** `FocusService` owns classes, tasks, preferences and
-  the current plan; it merges imports, deduplicates facts, adds the timetable
-  review fallback, validates hand-made and edited sessions, and
+  the current plan; it merges imports by normalised subject and title (updating
+  a task instead of duplicating it), adds review tasks for timetable subjects
+  that have no task, lengthens each task of an emphasised subject by 50% or 30
+  minutes (whichever is larger), validates hand-made and edited sessions, and
   completes/removes sessions. Manual tasks and sessions default to the internal
   medium priority.
 - **Focus Planner panel:** `focus.fxml` + `FocusController` provide file import,
@@ -567,12 +582,14 @@ progress or scores is intentionally excluded, not a missing persistence task.
   (`styleClass="panel-card, focus-panel"`); space-separated values were parsed as
   one CSS class, so panel styling had not been applied.
 - **Tests:** `FocusPlannerTest` (class/free-time conflicts, deadlines, subject
-  fairness, per-day caps, block sizes, warnings, the one-week default, the
-  latest-deadline horizon and explicit plan ends), `FocusFormatsTest` (time,
-  date, type, priority, duration, free-time-window and plan-end parsing),
-  `FocusJsonParserTest` (strict/fenced/Vietnamese input, invalid rows, subject
-  fallback) and `FocusServiceTest` (merge, override, review fallback, one-shot
-  plan end, manual validation, session editing and completion).
+  fairness, pass ordering, daily rotation, the 50% daily cap, per-day caps,
+  block sizes, warnings, the one-week default, the latest-deadline horizon and
+  explicit plan ends), `FocusFormatsTest` (time, date, type, priority, duration,
+  free-time-window and plan-end parsing), `FocusJsonParserTest`
+  (strict/fenced/Vietnamese input, invalid rows, subject fallback, always-on
+  reviews and extra-time subjects) and `FocusServiceTest` (normalised merge,
+  override, review fallback for new timetable subjects, extra-time adjustment,
+  one-shot plan end, manual validation, session editing and completion).
   `OllamaClientTest` now checks JSON-mode requests, and `FxmlLayoutTest` opens
   the Focus panel and checks the visible Copy/Reuse actions and right-click
   message menu.
@@ -641,10 +658,14 @@ progress or scores is intentionally excluded, not a missing persistence task.
   reads up to five files (20 MB each) and caps combined document context at
   24,000 characters; the planner defaults to a one-week horizon and accepts an
   explicit duration or deadline, capped at 365 days.
-- **Focus fallback:** a timetable without tasks gets one "Review class notes"
-  Quick task per subject, due at the end of the default week (today + 6 days).
-  Imports merge into the existing class/task set and exact duplicates are
-  ignored.
+- **Focus fallback:** every subject named in a subject list gets one
+  "Review class notes" Quick task, even when other tasks exist; a timetable
+  subject without any task gets the same fallback. Reviews are due at the end of
+  the default week (today + 6 days). Imports merge classes into the existing set
+  and match tasks by normalised subject + title, updating the existing task
+  instead of duplicating it. Extra-time subjects are lengthened by 50% or 30
+  minutes, whichever is larger, and the emphasis never replaces the other
+  subjects' work.
 - **Focus sessions:** sessions and completion persist in SQLite. `Generate plan` rebuilds the
   scheduled list from classes and tasks; hand-made sessions are not carried into
   a regenerated plan. Manual and generated sessions can be edited in the Session

@@ -5,6 +5,7 @@ import com.puppy.document.DocumentExtractionException;
 import com.puppy.document.DocumentTextExtractor;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
+import com.puppy.model.FocusPlan;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -33,8 +34,14 @@ public final class ChatService {
     /** Streams a reply using the recent conversation and any attached documents. */
     public String reply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
                         Consumer<String> onToken) throws AiException {
+        return reply(conversation, attachments, null, onToken);
+    }
+
+    /** Streams a reply using the recent conversation, attached documents and current focus plan. */
+    public String reply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
+                        FocusPlan focusPlan, Consumer<String> onToken) throws AiException {
         Objects.requireNonNull(onToken, "onToken");
-        return modelService.streamChat(ChatPromptBuilder.build(conversation, attachments), onToken);
+        return modelService.streamChat(ChatPromptBuilder.build(conversation, attachments, focusPlan), onToken);
     }
 
     /** Extracts readable text from a local file. Safe to call from a worker thread. */
@@ -44,6 +51,10 @@ public final class ChatService {
 
     public String greeting() {
         return "Hi! I'm Puppy, your desktop companion. Ask me anything.";
+    }
+
+    public ModelService modelService() {
+        return modelService;
     }
 
     public String modelName() {

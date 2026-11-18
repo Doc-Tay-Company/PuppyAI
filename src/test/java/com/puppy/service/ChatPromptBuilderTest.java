@@ -1,12 +1,18 @@
 package com.puppy.service;
 
+import com.puppy.enums.FocusType;
 import com.puppy.enums.MessageRole;
+import com.puppy.enums.Priority;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
+import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusSession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -83,5 +89,23 @@ class ChatPromptBuilderTest {
 
         assertEquals(2, prompt.size());
         assertEquals("hello", prompt.get(1).content());
+    }
+
+    @Test
+    void includesFocusPlanContextWhenPresent() {
+        FocusSession session = new FocusSession("s1", "Math", "Calculus review",
+                FocusType.DEEP, LocalDate.of(2026, 11, 20), LocalTime.of(19, 0),
+                60, Priority.HIGH, false);
+        FocusPlan plan = new FocusPlan(List.of(session), List.of(), LocalDate.of(2026, 11, 18));
+
+        List<ChatMessage> prompt = ChatPromptBuilder.build(
+                List.of(ChatMessage.user("What is my schedule?")), List.of(), plan);
+
+        assertEquals(2, prompt.size());
+        String system = prompt.get(0).content();
+        assertTrue(system.contains("<study_plan>"));
+        assertTrue(system.contains("Math"));
+        assertTrue(system.contains("Calculus review"));
+        assertTrue(system.contains("19:00 - 20:00"));
     }
 }

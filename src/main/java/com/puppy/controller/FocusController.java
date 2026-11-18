@@ -19,7 +19,11 @@ import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DatePicker;
 import javafx.scene.control.Label;
@@ -71,6 +75,9 @@ public class FocusController {
 
     @FXML
     private Label availabilityStatus;
+
+    @FXML
+    private Button changeTimeButton;
 
     @FXML
     private TabPane plannerTabs;
@@ -145,6 +152,9 @@ public class FocusController {
     private TextField sessionMinutes;
 
     @FXML
+    private CheckBox applyToAllSubjects;
+
+    @FXML
     private Button sessionSaveButton;
 
     @FXML
@@ -187,6 +197,9 @@ public class FocusController {
     private ScrollPane sessionsScroll;
 
     @FXML
+    private Button undoButton;
+
+    @FXML
     private Button clearPlanButton;
 
     private FocusService focusService;
@@ -204,6 +217,7 @@ public class FocusController {
     private boolean saving;
     private boolean closed;
     private boolean completionFailed;
+    private java.util.function.Consumer<FocusPlan> planChangeListener;
 
     private FocusSession activeSession;
     private FocusSession editingSession;
@@ -262,6 +276,8 @@ public class FocusController {
         this.closeAction = Objects.requireNonNull(closeAction, "closeAction");
         this.minimizeAction = Objects.requireNonNull(minimizeAction, "minimizeAction");
         this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
+        this.planChangeListener = plan -> Platform.runLater(this::refresh);
+        this.focusService.addPlanChangeListener(planChangeListener);
         loadPreferences();
         refresh();
     }
@@ -270,8 +286,15 @@ public class FocusController {
         FocusPreferences preferences = focusService.preferences();
         availableFrom.setValue(FocusFormats.formatTime(preferences.earliest()));
         availableTo.setValue(FocusFormats.formatTime(preferences.latest()));
-        availabilityStatus.setText("Sessions stay inside " + availableFrom.getValue()
-                + " - " + availableTo.getValue() + " and avoid every class.");
+        StringBuilder status = new StringBuilder("Sessions stay inside ")
+                .append(availableFrom.getValue())
+                .append(" - ")
+                .append(availableTo.getValue())
+                .append(" and avoid every class.");
+        if (!focusService.preferencesConfigured()) {
+            status.append(" Press Change time to save your own window.");
+        }
+        availabilityStatus.setText(status.toString());
     }
 
     /** Reloads the free-time selectors after Chat set a new window. */
@@ -287,6 +310,7 @@ public class FocusController {
         if (focusService == null) {
             return;
         }
+        loadPreferences();
         ensureActiveSessionExists();
         ensureEditingSessionExists();
         renderClasses();
@@ -294,6 +318,14 @@ public class FocusController {
         renderSessions();
         updateSummary();
         updateTimerCard();
+        updateUndoState();
+    }
+
+    private void updateUndoState() {
+        if (undoButton != null) {
+            undoButton.setDisable(focusService == null || saving || importing
+                    || !focusService.canUndo());
+        }
     }
 
     private void ensureActiveSessionExists() {
@@ -698,6 +730,9 @@ public class FocusController {
             setStatus(importStatus, "Choose up to 5 files at a time.", true);
             return;
         }
+        if (!confirmDiscardEdits("Importing a file")) {
+            return;
+        }
 
         java.util.List<Path> paths = selected.stream()
                 .map(file -> file.toPath().toAbsolutePath().normalize())
@@ -766,8 +801,11 @@ public class FocusController {
         sessionsBox.setDisable(busy);
         availableFrom.setDisable(busy);
         availableTo.setDisable(busy);
+        changeTimeButton.setDisable(busy);
+        applyToAllSubjects.setDisable(busy);
         clearPlanButton.setDisable(busy || focusService.sessions().isEmpty());
         timerFinish.setDisable(busy || activeSession == null);
+        updateUndoState();
     }
 
     @FunctionalInterface
@@ -833,6 +871,9 @@ public class FocusController {
         if (focusService.tasks().isEmpty()) {
             setStatus(plannerStatus,
                     "Add at least one task, or import a subject file first.", true);
+            return;
+        }
+        if (!confirmDiscardEdits("Generating a new plan")) {
             return;
         }
         mutate(plannerStatus, focusService::generatePlan, plan -> {
@@ -920,10 +961,18 @@ public class FocusController {
                 FocusSession draft = new FocusSession(editingSession.id(), subject, title, type,
                         date, start, minutes, editingSession.priority(),
                         editingSession.completed());
-                mutate(sessionStatus, () -> focusService.updateSession(draft), saved -> {
+                boolean applyAll = applyToAllSubjects.isSelected();
+                mutate(sessionStatus, () -> focusService.updateSessions(draft, applyAll), saved -> {
                     resetSessionForm();
-                    setStatus(sessionStatus,
-                            "Session updated to " + saved.timeRange() + ".", false);
+                    if (saved.size() > 1) {
+                        setStatus(sessionStatus, "Updated " + saved.size()
+                                + " sessions for " + subject + ".", false);
+                    } else if (!saved.isEmpty()) {
+                        setStatus(sessionStatus,
+                                "Session updated to " + saved.getFirst().timeRange() + ".", false);
+                    } else {
+                        setStatus(sessionStatus, "Session updated.", false);
+                    }
                 });
             } else {
                 FocusSession session = FocusService.newManualSession(
@@ -958,6 +1007,9 @@ public class FocusController {
         sessionSaveButton.setText("Save changes");
         cancelEditButton.setManaged(true);
         cancelEditButton.setVisible(true);
+        applyToAllSubjects.setManaged(true);
+        applyToAllSubjects.setVisible(true);
+        applyToAllSubjects.setSelected(false);
         sessionFormHint.setText("Editing " + session.subject() + " - " + session.title()
                 + ". Changes must stay inside free time and must not overlap "
                 + "a class or another session.");
@@ -986,6 +1038,9 @@ public class FocusController {
             sessionSaveButton.setText("Add session");
             cancelEditButton.setManaged(false);
             cancelEditButton.setVisible(false);
+            applyToAllSubjects.setSelected(false);
+            applyToAllSubjects.setManaged(false);
+            applyToAllSubjects.setVisible(false);
             sessionFormHint.setText("Create a one-off session directly in the planner.");
         }
     }
@@ -1026,6 +1081,52 @@ public class FocusController {
             stopActiveSession();
             setStatus(plannerStatus, "Sessions cleared. Import or generate again.", false);
         });
+    }
+
+    /** Reveals the free-time selectors for an explicit window change. */
+    @FXML
+    private void onChangeTime() {
+        if (focusService == null) {
+            return;
+        }
+        availableFrom.requestFocus();
+        availableFrom.show();
+        setStatus(availabilityStatus,
+                "Choose the new free-time window, then press Apply.", false);
+    }
+
+    /** Reverts the last manual or AI edit to the session list. */
+    @FXML
+    private void onUndoEdit() {
+        if (focusService == null || saving || importing) {
+            return;
+        }
+        mutate(plannerStatus, focusService::undoLastEdit, undone -> {
+            setStatus(plannerStatus, Boolean.TRUE.equals(undone)
+                    ? "Last plan change undone."
+                    : "There is nothing to undo.", false);
+        });
+    }
+
+    /**
+     * Asks before Generate or Import replaces the session list. The dialog only
+     * appears when the plan has manual or AI edits to lose.
+     */
+    private boolean confirmDiscardEdits(String action) {
+        if (focusService == null || !focusService.hasPlanEdits()) {
+            return true;
+        }
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Replace the edited plan?");
+        alert.setHeaderText(action + " replaces the current plan.");
+        alert.setContentText("Manual and AI changes to the sessions will be lost.");
+        ButtonType keep = new ButtonType("Keep editing", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType discard = new ButtonType("Discard changes", ButtonBar.ButtonData.OK_DONE);
+        alert.getButtonTypes().setAll(keep, discard);
+        if (focusRoot.getScene() != null && focusRoot.getScene().getWindow() != null) {
+            alert.initOwner(focusRoot.getScene().getWindow());
+        }
+        return alert.showAndWait().filter(discard::equals).isPresent();
     }
 
     private static String requireText(TextField field, String message) {
@@ -1106,6 +1207,9 @@ public class FocusController {
         }
         if (mascotStateService != null) {
             mascotStateService.resetToIdle();
+        }
+        if (planChangeListener != null && focusService != null) {
+            focusService.removePlanChangeListener(planChangeListener);
         }
     }
 }

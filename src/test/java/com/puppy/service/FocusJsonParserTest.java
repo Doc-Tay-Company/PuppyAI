@@ -150,6 +150,73 @@ class FocusJsonParserTest {
     }
 
     @Test
+    void alwaysAddsAReviewTaskForEverySubjectEvenWhenOtherTasksExist() throws Exception {
+        String reply = """
+                {
+                  "tasks": [
+                    {"subject": "Math", "title": "Problem set", "type": "QUICK",
+                     "estimatedMinutes": 25}
+                  ],
+                  "subjects": ["Math", "Physics"]
+                }
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertEquals(3, extraction.input().tasks().size(),
+                "The explicit task and a review task for both subjects should be present");
+        assertTrue(extraction.input().tasks().stream().anyMatch(task ->
+                        task.subject().equals("Math") && task.title().equals("Problem set")),
+                "The explicit task must be kept");
+        assertTrue(extraction.input().tasks().stream().anyMatch(task ->
+                        task.subject().equals("Physics")
+                                && task.title().equals("Review class notes")),
+                "Physics still needs a review task");
+    }
+
+    @Test
+    void readsMoreTimeSubjectsAsAnAdjustmentNotAnExtraTask() throws Exception {
+        String reply = """
+                {
+                  "subjects": ["Math", "Physics"],
+                  "moreTimeSubjects": ["Math"]
+                }
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertEquals(List.of("Math"), extraction.input().moreTimeSubjects());
+        assertEquals(2, extraction.input().tasks().size(),
+                "Math should not get an extra task just for needing more time");
+        assertTrue(extraction.input().tasks().stream()
+                .allMatch(task -> task.title().equals("Review class notes")));
+    }
+
+    @Test
+    void readsMoreTimeFlagsAndKeepsSubjectsMissingFromTheList() throws Exception {
+        String reply = """
+                {
+                  "subjects": [
+                    {"subject": "Math", "moreTime": true},
+                    "Physics"
+                  ],
+                  "moreTimeSubjects": [{"subject": "Chemistry"}]
+                }
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertTrue(extraction.input().moreTimeSubjects().containsAll(
+                        List.of("Math", "Chemistry")),
+                "Flags and the dedicated list should be merged: "
+                        + extraction.input().moreTimeSubjects());
+        assertEquals(3, extraction.input().tasks().size(),
+                "Every subject, including the extra-time one, gets a review task");
+        assertTrue(extraction.input().tasks().stream()
+                .anyMatch(task -> task.subject().equals("Chemistry")));
+    }
+
+    @Test
     void marksAnImportantSubjectOnlyDescriptionAsDeep() throws Exception {
         String reply = """
                 {"subjects": [

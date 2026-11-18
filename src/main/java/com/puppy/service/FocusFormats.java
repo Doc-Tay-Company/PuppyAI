@@ -50,10 +50,23 @@ public final class FocusFormats {
                     + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}\\s*[-/]\\s*\\d{2,4}"
                     + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}"
                     + "|\\d{1,2}\\s+thang\\s+\\d{1,2}(?:\\s+nam\\s+\\d{4})?)";
+    private static final String NON_CAPTURING_DATE_OR_DAY =
+            "(?:\\d{4}\\s*[-/]\\s*\\d{1,2}\\s*[-/]\\s*\\d{1,2}"
+                    + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}\\s*[-/]\\s*\\d{2,4}"
+                    + "|\\d{1,2}\\s*[-/]\\s*\\d{1,2}"
+                    + "|\\d{1,2}\\s+thang\\s+\\d{1,2}(?:\\s+nam\\s+\\d{4})?"
+                    + "|\\d{1,2})";
+    private static final Pattern PLAN_RANGE_PATTERN = Pattern.compile(
+            "(?:tu(?:\\s+ngay)?|from)\\s*(" + NON_CAPTURING_DATE_OR_DAY + ")"
+                    + "\\s*(?:den(?:\\s+ngay)?|toi(?:\\s+ngay)?|to|-|–)\\s*(" + NON_CAPTURING_DATE_OR_DAY + ")",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern PLAN_END_DATE = Pattern.compile(
             "(?:deadline|due(?: date)?|han(?:\\s+(?:chot|nop|cuoi))?|ngay hen|appointment"
                     + "|hen(?: gap)?|truoc(?: ngay)?|by|before|until|den(?: ngay)?"
                     + "|toi(?: ngay)?|vao(?: ngay)?|ngay)\\s*[:,\\-]?\\s*" + DATE_TOKEN,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern DAY_ONLY_END = Pattern.compile(
+            "(?:den(?:\\s+ngay)?|toi(?:\\s+ngay)?|ngay|until|by)\\s*(\\d{1,2})\\b",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern PLAN_WEEKS = Pattern.compile(
             "(?<!thu )(?<!moi )(?<!hang )(\\d{1,2})\\s*(?:tuan|weeks?|week)\\b",
@@ -206,6 +219,30 @@ public final class FocusFormats {
             }
         }
 
+        Matcher dayOnly = DAY_ONLY_END.matcher(text);
+        if (dayOnly.find()) {
+            int day = (int) parseCount(dayOnly.group(1));
+            if (day >= 1 && day <= 31) {
+                try {
+                    int year = today.getYear();
+                    int month = today.getMonthValue();
+                    int maxDayInMonth = today.lengthOfMonth();
+                    int resolvedDay = Math.min(day, maxDayInMonth);
+                    LocalDate date = LocalDate.of(year, month, resolvedDay);
+                    boolean explicitNextMonth = text.contains("thang sau") || text.contains("next month");
+                    if (explicitNextMonth) {
+                        LocalDate nextMonth = today.plusMonths(1);
+                        date = LocalDate.of(nextMonth.getYear(), nextMonth.getMonthValue(),
+                                Math.min(day, nextMonth.lengthOfMonth()));
+                    } else if (date.isBefore(today)) {
+                        date = today;
+                    }
+                    return Optional.of(capPlanEnd(date, today));
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
         if (text.contains("hom nay") || text.contains("today")) {
             return Optional.of(today);
         }
@@ -238,6 +275,56 @@ public final class FocusFormats {
         }
         long capped = Math.min(days, MAX_PLAN_DAYS);
         return Optional.of(today.plusDays(capped - 1));
+    }
+
+    public record PlanDateRange(LocalDate from, LocalDate until) {}
+
+    public static Optional<PlanDateRange> parsePlanDateRange(String value, LocalDate today) {
+        Objects.requireNonNull(today, "today");
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+        String text = normalize(value).replace('\u00a0', ' ').replaceAll("\\s+", " ");
+        Matcher matcher = PLAN_RANGE_PATTERN.matcher(text);
+        if (matcher.find()) {
+            LocalDate from = parseSingleDateOrDay(matcher.group(1), today, text);
+            LocalDate until = parseSingleDateOrDay(matcher.group(2), today, text);
+            if (from != null && until != null) {
+                if (until.isBefore(from)) {
+                    until = from;
+                }
+                return Optional.of(new PlanDateRange(from, until));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static LocalDate parseSingleDateOrDay(String token, LocalDate today, String fullText) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        LocalDate date = parsePlanDate(token, today);
+        if (date != null) {
+            return date;
+        }
+        try {
+            int day = Integer.parseInt(token.strip());
+            if (day >= 1 && day <= 31) {
+                int resolvedDay = Math.min(day, today.lengthOfMonth());
+                LocalDate d = LocalDate.of(today.getYear(), today.getMonthValue(), resolvedDay);
+                boolean explicitNextMonth = fullText.contains("thang sau") || fullText.contains("next month");
+                if (explicitNextMonth) {
+                    LocalDate nextMonth = today.plusMonths(1);
+                    d = LocalDate.of(nextMonth.getYear(), nextMonth.getMonthValue(),
+                            Math.min(day, nextMonth.lengthOfMonth()));
+                } else if (d.isBefore(today)) {
+                    d = today;
+                }
+                return d;
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        return null;
     }
 
     private static LocalDate capPlanEnd(LocalDate date, LocalDate today) {
@@ -295,7 +382,11 @@ public final class FocusFormats {
             int resolvedYear = year == null ? today.getYear() : year;
             LocalDate date = LocalDate.of(resolvedYear, month, day);
             if (year == null && date.isBefore(today)) {
-                date = date.plusYears(1);
+                if (month < today.getMonthValue()) {
+                    date = date.plusYears(1);
+                } else {
+                    date = today;
+                }
             }
             return date;
         } catch (RuntimeException e) {
@@ -423,7 +514,7 @@ public final class FocusFormats {
     }
 
     /** Lower-cases and strips Vietnamese diacritics so comparisons stay simple. */
-    static String normalize(String value) {
+    public static String normalize(String value) {
         if (value == null) {
             return "";
         }
@@ -433,5 +524,18 @@ public final class FocusFormats {
                 .replace('Đ', 'D')
                 .toLowerCase(Locale.ROOT)
                 .strip();
+    }
+
+    /**
+     * A comparison key for subject names: casing, Vietnamese diacritics and
+     * repeated whitespace are ignored, so "Toán cao cấp" matches "toan cao cap".
+     */
+    static String comparisonKey(String value) {
+        return normalize(value).replaceAll("\\s+", " ").strip();
+    }
+
+    /** Identifies a task by subject and title after the same normalisation. */
+    static String taskKey(String subject, String title) {
+        return comparisonKey(subject) + '\u0000' + comparisonKey(title);
     }
 }

@@ -41,7 +41,8 @@ public final class AiFocusPlanExtractor implements FocusPlanExtractor {
                 {"subject": "Math", "title": "Review chapter 3", "type": "QUICK",
                  "estimatedMinutes": 60, "deadline": "2026-11-20", "priority": "HIGH"}
               ],
-              "subjects": ["Physics", "Chemistry"]
+              "subjects": ["Math", "Physics", "Chemistry"],
+              "moreTimeSubjects": ["Math"]
             }
 
             Rules:
@@ -49,20 +50,24 @@ public final class AiFocusPlanExtractor implements FocusPlanExtractor {
             - Times use 24-hour HH:mm.
             - "deadline" is ISO yyyy-MM-dd.
             - Resolve relative dates such as "next Friday" against the date supplied below.
-            - "type" is DEEP when the description says the subject is important, needs more
-              time, is difficult, or the user is not confident / has not mastered it. DEEP
-              also covers programming, assignments, projects, research and exam preparation.
-            - "type" is QUICK for light lecture review, reading, notes and flashcards.
+            - "subjects" must list every subject found in the timetable, task list or
+              description, once each. Never leave a subject out because it already has a task.
+            - "moreTimeSubjects" lists subjects the user says need more time, are especially
+              important, are difficult, or are not fully mastered. This is a scheduling
+              adjustment, not a task: do not create a task only to repeat the emphasis.
+              Puppy lengthens and rebalances the subject's existing work.
+            - "type" is DEEP for genuinely deep work such as programming, assignments,
+              projects, research and exam preparation. DEEP also fits important or difficult
+              work that has a concrete task. "type" is QUICK for light lecture review,
+              reading, notes and flashcards.
             - "priority" is HIGH, MEDIUM or LOW. Use HIGH only for urgent or important work.
             - A time range the user calls free time is scheduling context, not a class.
               Never add it to "classes"; the scheduler already knows it.
             - Only include facts present in the text. Never invent classes or deadlines.
-            - If no tasks are listed, return an empty tasks array.
-            - If the text only names subjects and says nothing about their difficulty, put
-              them in "subjects" and leave classes/tasks empty.
-            - If the description says a subject is important, difficult, needs more time or
-              is not fully mastered but gives no explicit task, create a DEEP review task
-              for that subject instead of only listing it as a subject.
+            - If no tasks are listed, return an empty tasks array; Puppy adds a review task
+              for every subject in "subjects".
+            - If the text only names subjects, put them in "subjects" and leave classes and
+              tasks empty. If it also says a subject needs more time, use "moreTimeSubjects".
             - No Markdown fences, no explanation, no text outside the JSON.
             """.strip();
 

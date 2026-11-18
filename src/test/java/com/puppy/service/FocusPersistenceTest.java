@@ -130,6 +130,89 @@ class FocusPersistenceTest {
     }
 
     @Test
+    void configuredWindowAndPlanEditsSurviveRestart() throws Exception {
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            FocusService service = service(repository, CLOCK);
+            service.setPreferences(new FocusPreferences(
+                    LocalTime.of(9, 0), LocalTime.of(22, 0)));
+            service.addSession(manual());
+            assertTrue(service.preferencesConfigured());
+            assertTrue(service.hasPlanEdits());
+            assertTrue(service.canUndo());
+
+            FocusService restored = service(repository, CLOCK);
+            assertTrue(restored.preferencesConfigured(),
+                    "Chat must reuse a window the user already saved");
+            assertTrue(restored.hasPlanEdits(),
+                    "Generate and Import should warn before replacing edits");
+            assertFalse(restored.canUndo(), "Undo is deliberately transient");
+        }
+    }
+
+    @Test
+    void olderStatesWithoutFlagsInferAConfiguredWindow() throws Exception {
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            FocusPreferences custom = new FocusPreferences(
+                    LocalTime.of(17, 0), LocalTime.of(21, 0));
+            repository.save(new FocusState(List.of(), List.of(), custom,
+                    com.puppy.model.FocusPlan.empty(TODAY, "Legacy state")));
+
+            FocusService restored = service(repository, CLOCK);
+            assertEquals(custom, restored.preferences());
+            assertTrue(restored.preferencesConfigured(),
+                    "A non-default saved window means the user chose it");
+            assertFalse(restored.hasPlanEdits());
+            assertFalse(restored.canUndo());
+        }
+    }
+
+    @Test
+    void payloadsWrittenBeforeTheFlagsExistedStillLoad() throws Exception {
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            FocusPreferences custom = new FocusPreferences(
+                    LocalTime.of(10, 0), LocalTime.of(20, 0));
+            repository.save(new FocusState(List.of(), List.of(), custom,
+                    com.puppy.model.FocusPlan.empty(TODAY, "Legacy state"), true, true));
+            removeFlagFields(database);
+
+            FocusService restored = service(repository, CLOCK);
+            assertEquals(custom, restored.preferences());
+            assertTrue(restored.preferencesConfigured(),
+                    "An older payload has no flag, so the window itself is the evidence");
+            assertFalse(restored.hasPlanEdits(),
+                    "Missing edit flags must default to false");
+        }
+    }
+
+    private static void removeFlagFields(Database database) throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        database.transaction(connection -> {
+            String payload;
+            try (var select = connection.prepareStatement(
+                    "SELECT payload FROM focus_state WHERE singleton = 1");
+                 var rows = select.executeQuery()) {
+                rows.next();
+                payload = rows.getString(1);
+            }
+            com.fasterxml.jackson.databind.node.ObjectNode node =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(payload);
+            node.remove("preferencesConfigured");
+            node.remove("planEdited");
+            try (var update = connection.prepareStatement(
+                    "UPDATE focus_state SET payload = ? WHERE singleton = 1")) {
+                update.setString(1, mapper.writeValueAsString(node));
+                update.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    @Test
     void failedSavesRollbackEveryMutationIncludingImportsAndConsumedPlanEnd() throws Exception {
         try (Database database = Database.open(directory)) {
             FocusRepository repository = new FocusRepository(database);

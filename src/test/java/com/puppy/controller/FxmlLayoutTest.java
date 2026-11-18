@@ -212,6 +212,12 @@ class FxmlLayoutTest {
                         "The Focus menu item should open the planner in its own window");
                 assertTrue(focusStage.getScene().lookup("#sessionsBox").isVisible(),
                         "The Focus Planner should show its sessions list");
+                assertNotNull(focusStage.getScene().lookup("#applyToAllSubjects"),
+                        "The session editor should offer apply-to-all for a subject");
+                assertNotNull(focusStage.getScene().lookup("#undoButton"),
+                        "The Focus Planner should offer Undo");
+                assertNotNull(focusStage.getScene().lookup("#changeTimeButton"),
+                        "The Focus Planner should offer a Change time action");
                 assertNull(focusStage.getOwner(),
                         "The Focus panel should be positioned independently of the mascot stage");
                 closeActivePanel(focusStage, 1);
@@ -248,7 +254,7 @@ class FxmlLayoutTest {
                         (ComboBox<ChatController.ComposerMode>) chatStage.getScene().lookup("#modeChoice");
                 assertEquals("Ask me anything", messageInput.getPromptText());
                 assertEquals("📌", ((Button) chatStage.getScene().lookup("#attachButton")).getText());
-                assertEquals(List.of("Chat", "Focus plan", "Model", "Help"),
+                assertEquals(List.of("Chat", "Focus plan", "Adjust plan", "Help"),
                         modeChoice.getItems().stream().map(Object::toString).toList());
                 int messageCount = messages.getChildren().size();
                 messageInput.setText("   ");
@@ -256,20 +262,29 @@ class FxmlLayoutTest {
                 assertEquals(messageCount, messages.getChildren().size(),
                         "Blank chat input must not add a message");
                 messageInput.clear();
-                modeChoice.setValue(ChatController.ComposerMode.MODEL);
+                modeChoice.setValue(ChatController.ComposerMode.HELP);
                 ((Button) chatStage.getScene().lookup("#sendButton")).fire();
                 assertEquals(messageCount + 2, messages.getChildren().size(),
-                        "The Model option should answer locally without contacting Ollama");
-                assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
-                        "The composer option should return to Chat after running");
-                int afterModel = messages.getChildren().size();
+                        "The Help option should answer locally without contacting Ollama");
+                assertEquals(ChatController.ComposerMode.HELP, modeChoice.getValue(),
+                        "The selected option should stay active after a reply");
+                int afterHelp = messages.getChildren().size();
+                messageInput.setText("/model");
+                ((Button) chatStage.getScene().lookup("#sendButton")).fire();
+                assertEquals(afterHelp + 2, messages.getChildren().size(),
+                        "Slash commands should still work while a feature is selected");
+                assertEquals(ChatController.ComposerMode.HELP, modeChoice.getValue());
+                int afterSlash = messages.getChildren().size();
                 messageInput.setText("Math is important and I need more time");
                 modeChoice.setValue(ChatController.ComposerMode.FOCUS);
                 ((Button) chatStage.getScene().lookup("#sendButton")).fire();
-                assertEquals(afterModel + 2, messages.getChildren().size(),
+                assertEquals(afterSlash + 2, messages.getChildren().size(),
                         "Focus without a time window should ask when the user is free");
+                assertEquals(ChatController.ComposerMode.FOCUS, modeChoice.getValue(),
+                        "Asking for free time must not clear the selected feature");
+                modeChoice.setValue(ChatController.ComposerMode.CHAT);
                 assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
-                        "Asking for free time should return the composer to Chat");
+                        "Choosing another feature replaces the current one");
                 List<Button> messageActions = messages.lookupAll(".message-action").stream()
                         .filter(Button.class::isInstance)
                         .map(Button.class::cast)

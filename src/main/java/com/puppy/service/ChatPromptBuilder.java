@@ -3,6 +3,8 @@ package com.puppy.service;
 import com.puppy.enums.MessageRole;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
+import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusSession;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,8 +38,16 @@ final class ChatPromptBuilder {
     }
 
     static List<ChatMessage> build(List<ChatMessage> conversation, List<DocumentAttachment> attachments) {
+        return build(conversation, attachments, null);
+    }
+
+    static List<ChatMessage> build(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
+                                  FocusPlan focusPlan) {
         List<ChatMessage> prompt = new ArrayList<>();
         StringBuilder system = new StringBuilder(SYSTEM_PROMPT);
+        if (focusPlan != null && !focusPlan.sessions().isEmpty()) {
+            system.append("\n\n").append(focusPlanContext(focusPlan));
+        }
         if (attachments != null && !attachments.isEmpty()) {
             // Keep a single system message at the start; both providers accept
             // it, and OpenRouter sends it as a normal system message.
@@ -46,6 +56,34 @@ final class ChatPromptBuilder {
         prompt.add(ChatMessage.system(system.toString()));
         prompt.addAll(recentHistory(conversation));
         return List.copyOf(prompt);
+    }
+
+    private static String focusPlanContext(FocusPlan focusPlan) {
+        StringBuilder text = new StringBuilder("""
+                The user has an active study plan. Here are the scheduled sessions:
+                <study_plan>
+                """);
+        List<FocusSession> sessions = focusPlan.sessions();
+        int maxSessions = Math.min(sessions.size(), 15);
+        for (int i = 0; i < maxSessions; i++) {
+            FocusSession session = sessions.get(i);
+            text.append(i + 1).append(". ")
+                    .append(session.date()).append(" ")
+                    .append(session.timeRange()).append(" | ")
+                    .append(session.subject()).append(": ")
+                    .append(session.title()).append(" (")
+                    .append(session.type().label()).append(", ")
+                    .append(session.durationMinutes()).append("m")
+                    .append(session.completed() ? ", completed" : "")
+                    .append(")\n");
+        }
+        if (sessions.size() > maxSessions) {
+            text.append("... and ").append(sessions.size() - maxSessions).append(" more sessions.\n");
+        }
+        text.append("</study_plan>\n"
+                + "When the user asks about their schedule, sessions, or study plan, "
+                + "answer accurately based on these scheduled sessions.");
+        return text.toString();
     }
 
     private static String documentContext(List<DocumentAttachment> attachments) {

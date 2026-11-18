@@ -17,9 +17,11 @@ Click the puppy for a random message, double-click to open Study / Focus / Chat 
 More. After five idle minutes the puppy falls asleep; click it to wake it up.
 Chat streams Markdown replies from the selected model: **OpenRouter** in the
 cloud when a key is configured, or the local **Ollama** model as a fallback.
-Puppy offers **Focus plan / Model / Help** next to the message box and can read
-pinned PDF, Word and text files into the conversation. Settings switches models
-live and stores the OpenRouter key only on this computer. Focus planning reads a
+Puppy offers **Focus plan / Help / Chat** next to the message box; the chosen
+option stays active until another one is selected, and `/model` shows the active
+model. Chat can read pinned PDF, Word and text files into the conversation.
+Settings switches models live and stores the OpenRouter key only on this
+computer. Focus planning reads a
 pinned timetable or subject file, or a typed subject description, infers Quick
 or Deep focus from how you describe the subject, asks for your free-time window
 when it is missing, and builds a constraint-aware study plan while the Focus
@@ -150,7 +152,7 @@ mvn javafx:run        # launch Puppy
 | Menu (inside a panel) | Return to the Study / Focus / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
-| Chat options | Choose Chat, Focus plan, Model or Help beside the message box |
+| Chat options | Choose Chat, Focus plan or Help beside the message box; the choice stays active until you pick another |
 | Right-click a chat message | Copy it, or reuse it in the message box |
 | Ctrl+V in the message box | Paste copied text |
 | `/model` | Keyboard fallback to show the selected model and provider |
@@ -342,13 +344,16 @@ in chat is immediately visible in the panel.
 
 1. Puppy extracts text from up to five pinned PDF, DOCX, DOC, TXT or Markdown
    files (20 MB each), plus any subject description typed in the chat box.
-2. The selected model reads that text and returns strict JSON classes, tasks
-   and subjects. OpenRouter and Ollama share the same prompt; only the transport
-   changes. The model only extracts facts; it does not choose study times.
-3. If the typed description has no free-time window, Puppy asks for one before
-   planning. Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or
-   `7pm-9pm` are accepted; the answer becomes the Focus free-time setting.
-   Timetable class times are never mistaken for free time.
+2. The selected model reads that text and returns strict JSON classes, tasks,
+   subjects and subjects that need extra time. OpenRouter and Ollama share the
+   same prompt; only the transport changes. The model only extracts facts; it
+   does not choose study times.
+3. If no free-time window is saved yet, Puppy asks for one before planning.
+   Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or `7pm-9pm` are
+   accepted; the answer becomes the Focus free-time setting and later plans
+   reuse it. Change it any time by saying `change time to 18:00-22:00` in
+   **Adjust plan** or with **Change time** in Focus Planner. Timetable class
+   times are never mistaken for free time.
 4. The plan covers one week by default. Say `trong 3 ngày`, `for 2 weeks`,
    `1 tháng` or give an appointment such as `deadline 20/11` to choose another
    end date; an explicit date wins over a duration.
@@ -380,8 +385,11 @@ it is not shown or chosen in the UI.
   reported instead of being scheduled late.
 - Leaves a 10-minute gap between sessions and starts today at least 15 minutes
   from the current time.
-- Gives each subject at most two sessions per day and round-robins subjects, so
-  one subject cannot consume the whole plan.
+- Uses a two-pass queue per subject: every subject gets at most one session in
+  the first pass, and a second session is allowed only after every subject had a
+  first one. The starting subject rotates each day, each subject stays at two
+  sessions per day, and while several subjects still need time a second session
+  may not push a subject past half of that day's free window.
 - Uses a one-week horizon by default. A stated duration (`3 ngày`, `2 tuần`,
   `1 tháng`) or deadline/date (`deadline 20/11`, `trước 2026-12-01`) replaces it;
   durations are inclusive, dates without a year use their next non-past
@@ -391,25 +399,35 @@ it is not shown or chosen in the UI.
 
 ### Import and manual editing
 
-- **Focus plan** schedules every task found in the pinned files or typed
-  description. Describe a subject as important, difficult, needing more time, or
-  not fully mastered and Puppy schedules it as Deep focus; light review, reading
-  and notes stay Quick.
-- If the description has no start and end time, Puppy asks **"When are you
-  free?"** first and continues with the same request after the answer. Saying
-  `cancel` drops it.
-- If a timetable or subject file has no task list, Puppy adds one
-  "Review class notes" quick task per subject, due at the end of the default
-  week (today + 6 days).
-- Imported classes and tasks merge with what is already loaded; exact duplicates
-  are ignored.
+- **Focus plan** schedules every subject found in the pinned files or typed
+  description. Saying a subject is important, difficult, needs more time, or is
+  not fully mastered marks it for extra time: its tasks grow by 50% or 30
+  minutes, whichever is larger, while the other subjects keep their normal
+  reviews. Light review, reading and notes stay Quick.
+- If the description has no start and end time, Puppy reuses the window you
+  already saved. A first plan asks **"When are you free?"** once; later plans
+  skip the question. Say **change time to 18:00-22:00** in Adjust plan, or use
+  **Change time** in Focus Planner, to choose a different window. Saying
+  `cancel` drops a pending request.
+- Every subject in a subject list gets its own "Review class notes" quick task,
+  even when other tasks exist. A timetable subject with no task at all gets the
+  same review fallback. Reviews are due at the end of the default week
+  (today + 6 days).
+- Imported classes merge with what is already loaded. Tasks merge by normalised
+  subject and title, so importing the same work again updates its duration or
+  deadline instead of adding a duplicate.
 - Focus Planner can add classes, tasks and one-off sessions by hand. A manual
   session is rejected when it is in the past, outside free time, or overlaps a
   class or another session.
 - Any session can be edited from its **Edit** button: subject, action, focus
-  type, date, start time and duration. Saving re-checks the free-time window,
-  class times and every other session that day, ignores the session's own old
-  time, and preserves its completion state. **Cancel edit** leaves it untouched.
+  type, date, start time and duration. **Apply to all sessions of subject**
+  copies those fields to the subject's other sessions while keeping each date,
+  title and completion state. Saving re-checks the free-time window, class times
+  and every other session that day, ignores the session's own old time, and
+  preserves its completion state. **Cancel edit** leaves it untouched.
+- **Undo** below the session list reverts the last hand-made or AI change.
+  Generate plan and Import ask before replacing edited sessions; **Clear plan**
+  resets everything without asking.
 - Sessions support Start / Pause / Resume, a live countdown, Finish / Done and
   Remove. A running Focus timer keeps the mascot awake.
 
@@ -440,10 +458,15 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
   clipboard text into the message box.
 - **Commands and focus** use the option beside the message box instead of typing
   slash commands. **Focus plan** reads pinned files or the typed description,
-  infers Quick or Deep focus from it, and asks for a free-time window when the
-  description has none. **Model** shows the exact model, provider and whether it
-  is cloud or local, and **Help** lists the options. Model and Help answer
-  locally.
+  infers Quick or Deep focus from it, and asks for a free-time window only when
+  none is saved. **Adjust plan** turns a request such as "move Math to tomorrow
+  at 19:00", "make the Physics sessions 75 minutes", "change Wednesday to
+  Chemistry", "delete the Friday review", or "my free time is 18:00-22:00" into
+  structured plan edits. Every edit is checked against classes, free time and
+  other sessions, applied all-or-nothing, and can be undone in Focus Planner.
+  The selected option stays active after every reply and choosing another one
+  replaces it. **Help** lists the options and answers locally; `/model` still
+  shows the exact model, provider and whether it is cloud or local.
 - **Sessions** support a highlighted active conversation, a scrollable history,
   smooth switching and automatic archiving of the conversation you leave. The
   current session is copied into history only when a message completes, not on
