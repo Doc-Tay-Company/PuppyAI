@@ -1,12 +1,12 @@
 package com.puppy.config;
 
-import com.puppy.ai.OllamaClient;
 import com.puppy.document.DocumentTextExtractor;
+import com.puppy.service.AiFocusPlanExtractor;
 import com.puppy.service.ChatService;
 import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
-import com.puppy.service.OllamaFocusPlanExtractor;
+import com.puppy.service.ModelService;
 import com.puppy.util.ThreadManager;
 
 import java.time.Clock;
@@ -15,16 +15,18 @@ import java.util.Objects;
 /**
  * Builds and owns the application's services.
  *
- * <p>JavaFX controllers receive services from here instead of creating databases,
- * repositories or AI providers themselves. Later milestones register persistence,
- * AI providers and research services in the same place, and {@link #close()}
- * shuts all of them down when the application exits.</p>
+ * <p>JavaFX controllers receive services from here instead of creating
+ * databases, repositories or AI providers themselves. The selected AI model
+ * is owned by {@link ModelService}, which reads the user's local key and model
+ * choice. {@link #close()} shuts every service down when the application
+ * exits.</p>
  */
 public final class ServiceRegistry implements AutoCloseable {
 
     private final AppConfig config;
     private final ThreadManager threadManager;
     private final MascotStateService mascotStateService;
+    private final ModelService modelService;
     private final ChatService chatService;
     private final FocusService focusService;
 
@@ -35,11 +37,11 @@ public final class ServiceRegistry implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.threadManager = new ThreadManager(config.appName());
         this.mascotStateService = new DefaultMascotStateService();
-        OllamaClient ollamaClient = new OllamaClient(config.ollamaUrl(), config.ollamaModel());
+        this.modelService = new ModelService(config, new AiSettingsStore(config.dataDirectory()));
         DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
-        this.chatService = new ChatService(ollamaClient, documentTextExtractor);
+        this.chatService = new ChatService(modelService, documentTextExtractor);
         this.focusService = new FocusService(
-                new OllamaFocusPlanExtractor(ollamaClient, Clock.systemDefaultZone()),
+                new AiFocusPlanExtractor(modelService, Clock.systemDefaultZone()),
                 documentTextExtractor);
     }
 
@@ -49,7 +51,7 @@ public final class ServiceRegistry implements AutoCloseable {
             return;
         }
         started = true;
-        // Later milestones: database connection, repositories, cloud AI providers.
+        // Later milestones: database connection, repositories.
     }
 
     public boolean isStarted() {
@@ -64,10 +66,12 @@ public final class ServiceRegistry implements AutoCloseable {
         return mascotStateService;
     }
 
-    /**
-     * Local chat through Ollama, including document attachment extraction.
-     * AI providers for online modes will be registered here later.
-     */
+    /** The active provider/model plus the model and key settings behind it. */
+    public ModelService modelService() {
+        return modelService;
+    }
+
+    /** Chat through the selected local or cloud model, including attachments. */
     public ChatService chatService() {
         return chatService;
     }

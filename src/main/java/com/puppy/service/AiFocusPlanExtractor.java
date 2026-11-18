@@ -1,7 +1,6 @@
 package com.puppy.service;
 
-import com.puppy.ai.OllamaClient;
-import com.puppy.ai.OllamaException;
+import com.puppy.ai.AiException;
 import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
 import com.puppy.model.FocusExtraction;
@@ -15,13 +14,15 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Asks the local Ollama model to turn timetable/task files into strict JSON.
+ * Asks the selected AI model to turn timetable/task files into strict JSON.
  *
  * <p>The model only extracts facts; {@link FocusPlanner} makes every scheduling
  * decision. That split keeps the hard constraints deterministic and testable
- * even when the model is unavailable.</p>
+ * even when the model is unavailable. The request uses whichever provider and
+ * model the user selected in Settings, so focus extraction works through
+ * OpenRouter as well as the local Ollama model.</p>
  */
-public final class OllamaFocusPlanExtractor implements FocusPlanExtractor {
+public final class AiFocusPlanExtractor implements FocusPlanExtractor {
 
     static final int MAX_DOCUMENT_CHARS = 24_000;
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE;
@@ -65,15 +66,15 @@ public final class OllamaFocusPlanExtractor implements FocusPlanExtractor {
             - No Markdown fences, no explanation, no text outside the JSON.
             """.strip();
 
-    private final OllamaClient ollamaClient;
+    private final ModelService modelService;
     private final Clock clock;
 
-    public OllamaFocusPlanExtractor(OllamaClient ollamaClient) {
-        this(ollamaClient, Clock.systemDefaultZone());
+    public AiFocusPlanExtractor(ModelService modelService) {
+        this(modelService, Clock.systemDefaultZone());
     }
 
-    public OllamaFocusPlanExtractor(OllamaClient ollamaClient, Clock clock) {
-        this.ollamaClient = Objects.requireNonNull(ollamaClient, "ollamaClient");
+    public AiFocusPlanExtractor(ModelService modelService, Clock clock) {
+        this.modelService = Objects.requireNonNull(modelService, "modelService");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -100,11 +101,11 @@ public final class OllamaFocusPlanExtractor implements FocusPlanExtractor {
                 ChatMessage.system(SYSTEM_PROMPT),
                 ChatMessage.user(prompt));
         try {
-            String reply = ollamaClient.jsonChat(messages);
+            String reply = modelService.jsonChat(messages);
             return new FocusJsonParser().parse(reply, today);
-        } catch (OllamaException e) {
+        } catch (AiException e) {
             String message = e.getMessage() == null || e.getMessage().isBlank()
-                    ? "I couldn't reach the local model to read those files."
+                    ? "I couldn't reach the AI model to read those files."
                     : e.getMessage();
             throw new FocusPlanningException(message, e);
         }

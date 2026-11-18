@@ -85,10 +85,10 @@ class OllamaClientTest {
         server.createContext("/api/chat", exchange -> respondJsonLines(exchange, 404,
                 "{\"error\":\"model 'test-model' not found\"}"));
 
-        OllamaException error = assertThrows(OllamaException.class,
+        AiException error = assertThrows(AiException.class,
                 () -> client().chat(List.of(ChatMessage.user("hi")), token -> { }));
 
-        assertEquals(OllamaException.Reason.MODEL_NOT_FOUND, error.reason());
+        assertEquals(AiException.Reason.MODEL_NOT_FOUND, error.reason());
         assertTrue(error.getMessage().contains("ollama pull test-model"));
     }
 
@@ -99,10 +99,10 @@ class OllamaClientTest {
                 "{\"error\":\"model 'test-model' not found\"}"));
 
         List<String> tokens = new ArrayList<>();
-        OllamaException error = assertThrows(OllamaException.class,
+        AiException error = assertThrows(AiException.class,
                 () -> client().chat(List.of(ChatMessage.user("hi")), tokens::add));
 
-        assertEquals(OllamaException.Reason.MODEL_NOT_FOUND, error.reason());
+        assertEquals(AiException.Reason.MODEL_NOT_FOUND, error.reason());
         assertEquals(List.of("partial"), tokens);
     }
 
@@ -111,10 +111,10 @@ class OllamaClientTest {
         server.createContext("/api/chat", exchange -> respondJsonLines(exchange, 500,
                 "{\"error\":\"{\\\"error\\\":{\\\"code\\\":500,\\\"message\\\":\\\"template exploded\\\"}}\"}"));
 
-        OllamaException error = assertThrows(OllamaException.class,
+        AiException error = assertThrows(AiException.class,
                 () -> client().chat(List.of(ChatMessage.user("hi")), token -> { }));
 
-        assertEquals(OllamaException.Reason.HTTP, error.reason());
+        assertEquals(AiException.Reason.HTTP, error.reason());
         assertTrue(error.getMessage().contains("template exploded"));
     }
 
@@ -125,10 +125,10 @@ class OllamaClientTest {
         server = null;
 
         OllamaClient client = new OllamaClient("http://127.0.0.1:" + port, "test-model");
-        OllamaException error = assertThrows(OllamaException.class,
+        AiException error = assertThrows(AiException.class,
                 () -> client.chat(List.of(ChatMessage.user("hi")), token -> { }));
 
-        assertEquals(OllamaException.Reason.UNAVAILABLE, error.reason());
+        assertEquals(AiException.Reason.UNAVAILABLE, error.reason());
         assertTrue(error.getMessage().contains("I can't reach Ollama"));
     }
 

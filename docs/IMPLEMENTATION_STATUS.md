@@ -1,6 +1,6 @@
 # Puppy AI — Implementation Status
 
-Last updated: 2026-11-16
+Last updated: 2026-11-17
 
 ## Milestones
 
@@ -9,7 +9,7 @@ Last updated: 2026-11-16
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
 | 3 | Pure Java services and SQLite persistence | Planned — see `docs/MILESTONE_3_PLAN.md` |
-| 4 | AI integration (local Ollama chat, document attachments, Focus planner; cloud pending) | 🟡 In progress |
+| 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
 | 6 | Study mode, settings, integration | Pending |
 | 7 | Testing, optimization, packaging | Pending |
@@ -21,14 +21,14 @@ Last updated: 2026-11-16
   transparent, always-on-top window positioned in the bottom-right screen corner.
 - Draggable mascot with clean shutdown through `Application.stop()`.
 - Six mascot states (`MascotState`) driven by `DefaultMascotStateService`.
-- `MascotAnimator` plays the supplied 6 × 6 spritesheet through an ImageView
-  viewport, with per-state frame timing and a global speed multiplier.
+- `MascotAnimator` plays separately loaded PNG frames through an ImageView,
+  with per-state frame timing and a global speed multiplier.
 - `ServiceRegistry` builds and owns services; `ThreadManager` provides a daemon
   worker pool for later milestones and is closed on exit.
 - Right-click menu to switch animations and quit (the window has no title bar).
-- Placeholder-friendly assets: spritesheet at `resources/sprites/`, icon at
+- Separate numbered state frames at `resources/sprites/`, icon at
   `resources/icons/`.
-- Tests: spritesheet grid/artwork contract and mascot state service behaviour.
+- Tests: frame resource/count/timing contract and mascot state service behaviour.
 
 ## Completed (milestone 2)
 
@@ -42,16 +42,17 @@ Last updated: 2026-11-16
 - `AIMode` enum (`ONLINE`, `OFFLINE`, `AUTO`) backing the future settings panel.
 - Tests: `StudyTimerTest` (11 cases, fake clock) and `MockChatResponderTest`.
 
-- Expandable JavaFX shell with hover greeting, happy hover reaction,
-  drag-safe double-click menu and anchored resize behavior.
-- Cached Chat, Study and Settings panels plus More menu, Escape dismissal,
-  collapse/minimize behavior and a right-click development fallback.
+- Fixed bottom-right mascot window with separate menu and feature-panel windows.
+  Study opens top-right and Chat opens centered on the primary screen; opening
+  or resizing panels does not move the mascot.
+- Cached Chat, Study and Settings views plus More menu, Escape dismissal,
+  close/minimize behavior and a right-click development fallback.
 - Chat uses mock replies on the shared worker pool, rejects blank input and
   offers new conversations with session-only history.
 - Study UI drives the existing 25/5 timer with start/pause/reset, phase labels
   and completion feedback.
-- Settings exposes the functional in-session always-on-top switch and clearly
-  marks AI provider controls as future work; no credentials are collected.
+- Settings exposes the functional in-session always-on-top switch. Model and
+  OpenRouter key controls were added later in the AI milestone below.
 - `FxmlLayoutTest` loads all layouts and verifies the drag-safe menu, Study /
   Chat / Settings navigation, panel collapse, and blank-chat rejection.
 
@@ -72,13 +73,65 @@ Last updated: 2026-11-16
   keeps up to five document attachments for the current conversation. Attachment
   chips can be removed, and switching back to an archived conversation restores
   its attachments.
-- `SettingsController` — shows the configured Ollama model and server alongside
-  the always-on-top switch.
+- `SettingsController` — initially showed the configured Ollama model and server
+  alongside the always-on-top switch; the cloud-models milestone below extended it
+  with the model picker, cloud/local status and OpenRouter key section.
 - Presentation is unchanged: the mascot still follows THINKING → TALKING →
   HAPPY → IDLE while a reply is generated.
 - Tests: `OllamaClientTest` (streaming, errors, availability),
   `DocumentTextExtractorTest` (PDF, DOCX, text, limits),
   `ChatPromptBuilderTest` and `ChatServiceTest`.
+
+## Completed (cloud models and local key storage)
+
+- **Provider abstraction:** `ChatProvider` defines streaming chat and JSON
+  extraction. `OllamaClient` and `OpenRouterClient` implement it, and
+  `ModelService` owns the active selection and routes every request. Controllers
+  still never touch a provider directly.
+- **OpenRouter client:** streams `POST /chat/completions` as server-sent events
+  with `stream: true`, sends `Authorization: Bearer <key>`, and forwards only
+  assistant content fragments (private reasoning is ignored). JSON extraction
+  uses the same endpoint without streaming and requests
+  `response_format: {"type":"json_object"}`. Authentication, insufficient
+  credits, rate limits, missing models, network, timeout and safety failures
+  have friendly messages; the key is redacted from error text.
+- **Model catalog:** OpenRouter Gemini 2.5 Flash, Gemini 2.5 Flash-Lite, Gemini
+  2.5 Pro and the configured local Qwen model. All four stay listed even before
+  a key exists so the picker can lead the user to the key field. With no
+  explicit choice Puppy prefers Gemini 2.5 Flash for speed when a key exists and
+  otherwise uses the local model; choosing the local model is persisted and
+  honoured on later launches. Selecting a cloud model without a key is allowed
+  and keeps the choice so the key can be entered next.
+- **Local key storage:** `AiSettingsStore` writes the model choice to
+  `%LOCALAPPDATA%\PuppyAI\ai.properties` and the key to
+  `%LOCALAPPDATA%\PuppyAI\ai-secrets.properties`. Writes are atomic and
+  owner-only permissions are applied where the platform supports POSIX. A key
+  in `OPENROUTER_API_KEY`, `PUPPY_OPENROUTER_API_KEY` or
+  `-Dpuppy.openrouter.apiKey` wins over a saved key and makes the Settings field
+  read-only. Keys never enter the repository, tests, docs or logs.
+- **Settings UI:** live model picker with `OpenRouter · <model>` and
+  `<model> · local` labels, cloud/local pill, model detail and hint, and a key
+  section shown directly below the picker only for an OpenRouter model. The
+  section contains a masked `PasswordField`, Save key / Remove key, a
+  configured/not-configured pill, environment-managed state and action status.
+  The local model section stays visible, needs no key, and hides the key section
+  from the layout. The Settings window recomputes its height when the section
+  appears or hides so nothing clips.
+- **Chat and Focus:** the Model reply names the selected provider and whether it
+  is cloud or local. Errors distinguish a missing or rejected key, insufficient
+  credits, rate limits, blocked prompts and network failures.
+  `AiFocusPlanExtractor` asks the selected model for strict JSON, so Focus
+  planning works through OpenRouter or Ollama while `FocusPlanner` still makes
+  every scheduling decision.
+- **Tests:** `OpenRouterClientTest` covers SSE streaming, header-only keys, JSON
+  mode, blocked prompts, redacted errors and unreachable hosts.
+  `AiSettingsStoreTest` covers persistence, separation of selection and secret
+  files, validation, removal and damaged files. `ModelServiceTest` covers
+  cloud-first defaults, explicit local choices, selecting a cloud model without
+  a key, clearing and restoring the key, switching and environment-key
+  precedence. `FxmlLayoutTest` verifies the picker labels, masked key field,
+  key-section visibility for cloud versus local, and Settings fit. The suite is
+  109 tests, 0 failures.
 
 ## Completed (mascot and chat polish)
 
@@ -93,9 +146,8 @@ Last updated: 2026-11-16
   wakes the mascot, shows a wake line and restarts the inactivity timer.
 - **Notifications:** while the mascot is idle and compact, a quiet random
   notification appears every two minutes and auto-hides after eight seconds.
-- **Chat size:** the chat panel opens at a monitor-aware 940 × 720 maximum,
-  stays anchored bottom-right and has an Expand / Restore toggle for the full
-  visual workspace.
+- **Chat size:** the chat window opens centered at up to 940 × 720 and has an
+  Expand / Restore toggle for the primary screen's visual workspace.
 - **Markdown:** `MarkdownRenderer` renders headings, emphasis, strikethrough,
   inline/fenced code, lists, quotes, links, tables and rules as JavaFX nodes.
   Streaming text is plain for speed; the completed message is re-rendered as
@@ -108,6 +160,11 @@ Last updated: 2026-11-16
   footer under the bubble. `DurationFormats` switches from seconds to
   minutes/seconds to hours/minutes, and the measured time is stored with the
   message so it survives history switches.
+- **Copy and reuse:** every message bubble has a right-click **Copy message** /
+  **Reuse in message box** context menu. User messages also show visible
+  **Copy** and **Reuse** actions under the bubble; Copy briefly changes to
+  “Copied”, and Reuse restores the exact request to the composer without sending
+  it. Normal clipboard paste (**Ctrl+V**) remains available in the message box.
 - **Commands:** an option beside the message box replaces typed slash commands:
   **Chat**, **Focus plan**, **Model** and **Help**. Model and Help answer
   locally. The 📌 button attaches documents, and the new-chat greeting ends at
@@ -127,8 +184,11 @@ Last updated: 2026-11-16
 - **Deterministic planning:** `FocusPlanner` schedules only inside the daily free
   window (default 08:00–22:00), subtracts weekly class times, respects
   deadlines, leaves 10-minute gaps, caps each subject at two sessions per day,
-  round-robins subjects for fairness and plans at most 21 days ahead. Today's
-  first session starts at least 15 minutes after the current time.
+  and round-robins subjects for fairness. The horizon defaults to one week, uses
+  the latest task deadline when it is later, and honors an explicit plan end
+  such as `trong 3 ngày`, `2 tuần`, `1 tháng`, `deadline 20/11` or `trước
+  2026-12-01`; the horizon is capped at 365 days. Today's first session starts at
+  least 15 minutes after the current time.
 - **Block sizing:** long tasks are split into equal blocks rather than one full
   block plus a remainder; a 120-minute deep task becomes 3 × 40 minutes.
 - **Tolerant parsing:** `FocusFormats` reads `18:00`, `6h30`, `6h30 chieu`,
@@ -137,10 +197,15 @@ Last updated: 2026-11-16
   priorities, durations such as `1h30`, `1.5h` and `45 phút`, and free-time
   windows such as `18:00-21:30`, `7h tối - 9h tối` and `7pm-9pm`. Date-like
   number pairs are rejected so a deadline cannot become a study window.
-- **Model extraction:** `OllamaFocusPlanExtractor` asks the local model for
-  strict JSON via the new `OllamaClient.jsonChat` (`format: json`, low
-  temperature). `FocusJsonParser` accepts fenced/prefaced JSON, skips invalid
-  rows with notes, and creates review tasks when the text lists only subjects.
+  `parsePlanEnd` reads inclusive day/week/month durations, deadline/appointment
+  dates, and `hôm nay` / `ngày mai`; weekday phrases such as `thứ 2 tuần sau`
+  and time-only text are ignored. Dates without a year use the next non-past
+  occurrence, and explicit dates win over duration text.
+- **Model extraction:** `AiFocusPlanExtractor` asks the selected model for
+  strict JSON through `ChatProvider.jsonChat` (Ollama `format: json`, OpenRouter
+  `response_format: json_object`, low temperature). `FocusJsonParser`
+  accepts fenced/prefaced JSON, skips invalid rows with notes, and creates
+  review tasks when the text lists only subjects.
 - **Application service:** `FocusService` owns classes, tasks, preferences and
   the current plan; it merges imports, deduplicates facts, adds the timetable
   review fallback, validates hand-made and edited sessions, and
@@ -156,11 +221,12 @@ Last updated: 2026-11-16
 - **Chat focus option:** **Focus plan** accepts pinned files or a typed subject
   description, infers Quick/Deep from the description, runs extraction on the
   shared worker pool, replies with a Markdown plan summary and opens Focus
-  Planner. When the description has no free-time window, Puppy stores the request,
-  asks “When are you free?”, parses the reply into `FocusPreferences`, and then
-  builds the plan. Timetable class times are not treated as free time. Slash
-  commands remain a keyboard fallback, and the composer placeholder is “Ask me
-  anything”.
+  Planner. When the description has no free-time window, Puppy stores the request
+  and any requested plan end, asks “When are you free?”, parses the reply into
+  `FocusPreferences`, and then builds the plan. A duration or deadline in the
+  request sets the plan end; otherwise the planner uses one week. Timetable class
+  times are not treated as free time. Slash commands remain a keyboard fallback,
+  and the composer placeholder is “Ask me anything”.
 - **Navigation:** a Focus button in the main menu and a Focus planner item in
   More; the Focus panel is cached, monitor-aware (980 × 840 preferred, clamped
   to the screen), and a running Focus timer blocks the idle sleep timer.
@@ -168,27 +234,34 @@ Last updated: 2026-11-16
   (`styleClass="panel-card, focus-panel"`); space-separated values were parsed as
   one CSS class, so panel styling had not been applied.
 - **Tests:** `FocusPlannerTest` (class/free-time conflicts, deadlines, subject
-  fairness, per-day caps, block sizes, warnings), `FocusFormatsTest` (time,
-  date, type, priority, duration and free-time-window parsing),
+  fairness, per-day caps, block sizes, warnings, the one-week default, the
+  latest-deadline horizon and explicit plan ends), `FocusFormatsTest` (time,
+  date, type, priority, duration, free-time-window and plan-end parsing),
   `FocusJsonParserTest` (strict/fenced/Vietnamese input, invalid rows, subject
-  fallback) and `FocusServiceTest` (merge, override, review fallback, manual
-  validation, session editing and completion). `OllamaClientTest` now checks
-  JSON-mode requests, and `FxmlLayoutTest` opens the Focus panel.
+  fallback) and `FocusServiceTest` (merge, override, review fallback, one-shot
+  plan end, manual validation, session editing and completion).
+  `OllamaClientTest` now checks JSON-mode requests, and `FxmlLayoutTest` opens
+  the Focus panel and checks the visible Copy/Reuse actions and right-click
+  message menu.
 
 ## Services used by the UI
 
 | Class | How the UI should use it |
 | --- | --- |
-| `ChatService` | `ChatController` gets it from `ServiceRegistry`, streams replies with `reply(...)`, and reads attachments with `readDocument(...)`. |
+| `ChatService` | `ChatController` gets it from `ServiceRegistry`, streams replies with `reply(...)`, and reads attachments with `readDocument(...)`. It delegates to the selected provider through `ModelService`. |
+| `ModelService` | Owns the model catalog, cloud-first selection, persisted choice, key state and request routing. `SettingsController` calls it to switch models and manage the OpenRouter key. |
 | `FocusService` | `FocusController` gets it from `ServiceRegistry`; the Chat focus option calls `importDocuments(...)` on the worker pool. Shares classes, tasks, preferences, plan and session state with the panel. |
 | `FocusPlanner` | Pure-Java scheduling owned by `FocusService`; the UI never makes placement decisions. |
-| `FocusPlanExtractor` | Infrastructure behind `FocusService`; `OllamaFocusPlanExtractor` reads files, while tests use a fake extractor. |
+| `FocusPlanExtractor` | Infrastructure behind `FocusService`; `AiFocusPlanExtractor` reads files through the selected model, while tests use a fake extractor. |
 | `DocumentTextExtractor` | Used through `ChatService.readDocument(...)` and `FocusService.importFromFiles(...)`; never called from the JavaFX thread. |
-| `OllamaClient` | Infrastructure owned by `ChatService`; controllers never construct it. |
+| `ChatProvider` | Contract implemented by `OllamaClient` and `OpenRouterClient`; `ModelService` constructs and routes to it. Controllers never construct a provider. |
+| `OllamaClient` | Local `/api/chat` streaming, JSON mode, availability checks and friendly errors. |
+| `OpenRouterClient` | Cloud SSE streaming, JSON mode, bearer header, redacted errors and OpenRouter-specific friendly messages. |
+| `AiSettingsStore` | Persists the model choice and OpenRouter key in the local data directory; never used by controllers directly. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
 | `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
 | `MockChatResponder` | Legacy stand-in retained for its unit test; it is no longer connected to the UI. |
-| `AIMode` | Reserved for the future cloud routing/settings work. |
+| `AIMode` | Reserved; current selection and routing live in `ModelService`. |
 
 ## Current implementation notes
 
@@ -199,33 +272,41 @@ Last updated: 2026-11-16
   `PUPPY_OLLAMA_MODEL` (default `hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M`).
   `OllamaClient` sends `think: false` because the chat UI shows the answer
   rather than Qwen's private reasoning.
-- **Prompt:** Qwen's chat template requires a single system message at the
-  start, so Puppy's rules and the optional document context are merged into one
-  system message. `ChatPromptBuilder` keeps at most ten turns, 8,000 characters
-  of history and 20,000 characters of document text; the model runs with a
+- **Cloud AI:** `AppConfig` reads `OPENROUTER_API_KEY`, `PUPPY_OPENROUTER_API_KEY`
+  or `-Dpuppy.openrouter.apiKey` and the endpoint from `PUPPY_OPENROUTER_URL` /
+  `-Dpuppy.openrouter.url` (default `https://openrouter.ai/api/v1`).
+  A key saved in Settings lives in `%LOCALAPPDATA%\PuppyAI\ai-secrets.properties`.
+  OpenRouter requests use the `Authorization: Bearer` header, never the URL or
+  body.
+- **Prompt:** Puppy's rules and optional document context are merged into one
+  system message, which both providers accept as a normal system message.
+  `ChatPromptBuilder` keeps at most ten turns, 8,000 characters of history and
+  20,000 characters of document text; the local model runs with a
   16,384-token context window.
-- **Attachments:** only extracted text is kept in memory and sent to the local
-  model. Up to five files can be attached per conversation; the attachment bar
-  restores when an archived conversation is selected. Removing a chip removes
-  its context from later prompts.
-- **Sprites:** the sheet is a 6 × 6 grid (row per state, 6 frames per row,
-  768 × 768 with 128 × 128 px cells today). Frame size is derived at runtime, so
-  new art with the same grid shape requires no code change.
-  `docs/SPRITESHEET_GUIDE.md` specifies that grid and ships a trace template at
-  `docs/spritesheet-guide.png`.
+- **Attachments:** only extracted text is kept in memory. With a local model it
+  stays on this computer; with a cloud model it is sent to OpenRouter and its
+  model provider with the prompt. Up to five files can be attached per
+  conversation; the attachment bar restores when an archived conversation is
+  selected. Removing a chip removes its context from later prompts.
+- **Sprites:** numbered transparent PNG frames are stored separately by state.
+  `MascotSprites` defines their order and per-image timing; the animator loads
+  each image once and switches images during playback.
 - **State priority:** `DefaultMascotStateService` currently lets the latest
   request win; the priority rules (study must not be interrupted by an idle
   refresh) belong to milestone 6.
 - **Data directory:** `AppConfig` resolves `%LOCALAPPDATA%\PuppyAI` (or
-  `~/.local/share/PuppyAI`) but nothing writes to it yet.
-- **Focus pipeline:** the local model only extracts facts from timetable/task
+  `~/.local/share/PuppyAI`). `AiSettingsStore` writes the model choice and
+  OpenRouter key there; no runtime data is written inside the project.
+- **Focus pipeline:** the selected model only extracts facts from timetable/task
   files; `FocusPlanner` makes every scheduling decision. This keeps the hard
   constraints deterministic and testable when the model is unavailable. Import
   reads up to five files (20 MB each) and caps combined document context at
-  24,000 characters; the planner horizon is 21 days.
+  24,000 characters; the planner defaults to a one-week horizon and accepts an
+  explicit duration or deadline, capped at 365 days.
 - **Focus fallback:** a timetable without tasks gets one "Review class notes"
-  Quick task per subject, due in seven days. Imports merge into the existing
-  class/task set and exact duplicates are ignored.
+  Quick task per subject, due at the end of the default week (today + 6 days).
+  Imports merge into the existing class/task set and exact duplicates are
+  ignored.
 - **Focus sessions:** sessions are in memory only. `Generate plan` rebuilds the
   scheduled list from classes and tasks; hand-made sessions are not carried into
   a regenerated plan. Manual and generated sessions can be edited in the Session
@@ -241,21 +322,26 @@ Last updated: 2026-11-16
 - The entire 336 × 252 window captures mouse input, including transparent
   pixels; per-pixel hit testing is not part of the MVP.
 - Chat history, attachments and all Focus data (classes, tasks, preferences and
-  sessions) are session-only; SQLite persistence is a later milestone.
+  sessions) are session-only; SQLite persistence is a later milestone. The model
+  choice and OpenRouter key do persist in the local data directory.
 - Regenerating a Focus plan replaces the scheduled session list, so hand-made
   sessions are lost unless they are recreated. Manual and generated sessions are
   not yet linked to source tasks.
-- Focus extraction requires Ollama and the configured model. Combined document
-  text is capped at 24,000 characters, and scanned/image-only files are not
-  supported.
-- The planner uses weekly class slots and a 21-day horizon; it does not model
-  exam weeks, one-off timetable changes or multi-week recurring courses.
+- Focus extraction requires the selected model: a working OpenRouter key and
+  internet connection for cloud, or Ollama and the configured model for local.
+  Combined document text is capped at 24,000 characters, and scanned/image-only
+  files are not supported.
+- The planner uses weekly class slots and a one-week default horizon (or the
+  user's explicit end); it does not model exam weeks, one-off timetable changes
+  or multi-week recurring courses.
 - Scanned/image-only PDFs have no selectable text and are rejected. Password-
   protected files and files above 20 MB are also rejected.
 - Very long documents are truncated to fit the model context, so the answer may
   miss details near the end of a large file.
-- Only local Ollama chat is wired up; cloud AI, Tavily research and automatic
-  routing are still pending.
+- Cloud OpenRouter chat and local Ollama chat are wired up; Tavily research and
+  the automatic research routing are still pending. An invalid, underfunded or
+  rate-limited OpenRouter key falls back to a friendly chat error rather than
+  switching models automatically.
 - True hide-to-tray is deferred until a reliable restore path is implemented.
 - PDFBox/POI print a one-time "Log4j API could not find a logging provider"
   warning in the console because the project does not bundle a logging backend;
@@ -279,21 +365,27 @@ Last updated: 2026-11-16
 3. The mascot's visual state is application state, owned by
    `MascotStateService`, not by animation callbacks — this prevents flicker
    while tokens stream.
-4. Animations are played by moving an ImageView viewport over one loaded sheet,
-   which avoids per-frame image loading and keeps switching cheap.
+4. Mascot frame images are loaded once and reused during playback; state changes
+   do not reload image resources.
 5. Background work is confined to the `ThreadManager` pool; UI updates are
    marshalled with `Platform.runLater`. Streamed tokens are batched so a fast
    model cannot flood the JavaFX Application Thread.
 6. Long-running timers calculate the deadline once (`StudyTimer`) instead of
    decrementing a counter, so UI stalls or a slow tick cannot make them drift.
-7. `ChatController` calls `ChatService`; it never talks to Ollama, PDFBox or
-   Apache POI directly.
-8. The local model is accessed over Ollama's HTTP API. No Python service or
+7. `ChatController` calls `ChatService`; it never talks to Ollama, OpenRouter,
+   PDFBox or Apache POI directly.
+8. Local inference uses Ollama's HTTP API and cloud inference uses OpenRouter's
+   HTTPS API through the same `ChatProvider` contract. No Python service or
    separate backend is introduced.
 9. Document context and chat history are bounded before every request so a large
-   attachment cannot overflow Qwen's context window or block the UI.
-10. Qwen's chat template accepts only one starting system message, so the
-    document context is appended to Puppy's system prompt instead of being sent
-    as a second system message.
+   attachment cannot overflow the selected model's context window or block the
+   UI.
+10. Puppy's rules and document context share one starting system message, which
+    both Ollama and OpenRouter accept as a normal system message.
 11. Only extracted document text is held in memory. Original files stay where
-    the user chose them, and nothing is uploaded to a cloud service.
+    the user chose them. That text is sent to OpenRouter and its model provider
+    only while a cloud model is selected; the local model keeps it on this
+    computer.
+12. The OpenRouter key is stored outside the repository in the user's data
+    directory and is sent only in the `Authorization: Bearer` header. Error text
+    is redacted and the UI never displays the key.

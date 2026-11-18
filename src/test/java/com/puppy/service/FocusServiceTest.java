@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -97,7 +98,8 @@ class FocusServiceTest {
         assertEquals("Chemistry", review.subject());
         assertEquals("Review class notes", review.title());
         assertEquals(FocusType.QUICK, review.type());
-        assertEquals(TODAY.plusDays(7), review.deadline());
+        assertEquals(TODAY.plusDays(6), review.deadline(),
+                "Generated review work is due at the end of the default one-week horizon");
 
         assertEquals(2, service.currentPlan().sessions().size(),
                 "A 50-minute quick review becomes two 25-minute sessions");
@@ -272,6 +274,30 @@ class FocusServiceTest {
         assertEquals(time(13, 0), session.start(),
                 "The plan should start at the configured earliest time");
         assertFalse(session.end().isAfter(time(18, 0)));
+    }
+
+    @Test
+    void usesAnExplicitPlanEndForTheNextPlanOnly() throws Exception {
+        FocusService service = service(documents -> extraction(
+                List.of(),
+                List.of(task("Math", "Practice", FocusType.QUICK,
+                        200, TODAY.plusDays(10)))));
+
+        service.setPreferences(service.preferences().withPlanUntil(TODAY.plusDays(2)));
+        FocusPlan plan = service.importDocuments(List.of(attachment("math.txt")), null);
+
+        assertEquals(6, plan.sessions().size(),
+                "Three days at two sessions per day cap the plan");
+        assertTrue(plan.sessions().stream()
+                        .allMatch(session -> !session.date().isAfter(TODAY.plusDays(2))),
+                "The explicit plan end should bound the imported plan");
+        assertNull(service.preferences().planUntil(),
+                "The plan end belongs to one plan only");
+
+        FocusPlan next = service.generatePlan();
+        assertTrue(next.sessions().stream()
+                        .anyMatch(session -> session.date().isAfter(TODAY.plusDays(2))),
+                "A later plan should fall back to the default horizon");
     }
 
     private static FocusService service(FocusPlanExtractor extractor) {

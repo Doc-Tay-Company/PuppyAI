@@ -33,7 +33,7 @@ import java.util.function.Consumer;
  * the UI can render tokens as they arrive. This class contains no UI code and
  * can be used from any background thread.</p>
  */
-public final class OllamaClient {
+public final class OllamaClient implements ChatProvider {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
     private static final Duration AVAILABILITY_TIMEOUT = Duration.ofSeconds(2);
@@ -72,8 +72,29 @@ public final class OllamaClient {
                 .build();
     }
 
+    @Override
+    public String providerId() {
+        return AiModels.OLLAMA_PROVIDER;
+    }
+
+    @Override
+    public String providerName() {
+        return "Ollama";
+    }
+
+    @Override
     public String model() {
         return model;
+    }
+
+    @Override
+    public boolean isCloud() {
+        return false;
+    }
+
+    @Override
+    public String serverLabel() {
+        return baseUri.toString();
     }
 
     public String baseUrl() {
@@ -81,6 +102,7 @@ public final class OllamaClient {
     }
 
     /** Quick check used to explain connection problems before sending a prompt. */
+    @Override
     public boolean isAvailable() {
         try {
             HttpRequest request = HttpRequest.newBuilder(tagsUri)
@@ -100,6 +122,7 @@ public final class OllamaClient {
     }
 
     /** True when the configured model name appears in the server's model list. */
+    @Override
     public boolean hasModel() {
         try {
             HttpRequest request = HttpRequest.newBuilder(tagsUri)
@@ -133,10 +156,11 @@ public final class OllamaClient {
      * Sends a conversation to Ollama and forwards each content fragment.
      *
      * @return the complete assistant reply
-     * @throws OllamaException when the server is unreachable, the model is
-     *                         missing, the request fails or it is interrupted
+     * @throws AiException when the server is unreachable, the model is missing,
+     *                     the request fails or it is interrupted
      */
-    public String chat(List<ChatMessage> messages, Consumer<String> onToken) throws OllamaException {
+    @Override
+    public String chat(List<ChatMessage> messages, Consumer<String> onToken) throws AiException {
         return send(messages, onToken, false);
     }
 
@@ -144,17 +168,18 @@ public final class OllamaClient {
      * Sends a request that asks Ollama to return a single JSON object. Used by
      * the Focus planner to read timetable and task files reliably.
      */
-    public String jsonChat(List<ChatMessage> messages) throws OllamaException {
+    @Override
+    public String jsonChat(List<ChatMessage> messages) throws AiException {
         return send(messages, token -> { }, true);
     }
 
     private String send(List<ChatMessage> messages, Consumer<String> onToken, boolean json)
-            throws OllamaException {
+            throws AiException {
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(onToken, "onToken");
         if (messages.isEmpty()) {
-            throw new OllamaException(
-                    OllamaException.Reason.PROTOCOL, "Puppy has no message to send to the model.");
+            throw new AiException(
+                    AiException.Reason.PROTOCOL, "Puppy has no message to send to the model.");
         }
 
         HttpRequest request;
@@ -166,8 +191,8 @@ public final class OllamaClient {
                     .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody(messages, json)))
                     .build();
         } catch (JsonProcessingException e) {
-            throw new OllamaException(
-                    OllamaException.Reason.PROTOCOL, "Puppy couldn't prepare the request.", e);
+            throw new AiException(
+                    AiException.Reason.PROTOCOL, "Puppy couldn't prepare the request.", e);
         }
 
         HttpResponse<InputStream> response;
@@ -176,20 +201,20 @@ public final class OllamaClient {
         } catch (HttpConnectTimeoutException e) {
             throw unavailable(e);
         } catch (HttpTimeoutException e) {
-            throw new OllamaException(
-                    OllamaException.Reason.TIMEOUT,
+            throw new AiException(
+                    AiException.Reason.TIMEOUT,
                     "Ollama took too long to answer. The model may still be loading; try again in a moment.",
                     e);
         } catch (ConnectException e) {
             throw unavailable(e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new OllamaException(
-                    OllamaException.Reason.INTERRUPTED, "Reply stopped.", e);
+            throw new AiException(
+                    AiException.Reason.INTERRUPTED, "Reply stopped.", e);
         } catch (IOException e) {
             if (Thread.currentThread().isInterrupted()) {
-                throw new OllamaException(
-                        OllamaException.Reason.INTERRUPTED, "Reply stopped.", e);
+                throw new AiException(
+                        AiException.Reason.INTERRUPTED, "Reply stopped.", e);
             }
             throw unavailable(e);
         }
@@ -205,8 +230,8 @@ public final class OllamaClient {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (Thread.currentThread().isInterrupted()) {
-                    throw new OllamaException(
-                            OllamaException.Reason.INTERRUPTED, "Reply stopped.");
+                    throw new AiException(
+                            AiException.Reason.INTERRUPTED, "Reply stopped.");
                 }
                 if (line.isBlank()) {
                     continue;
@@ -216,8 +241,8 @@ public final class OllamaClient {
                 try {
                     node = mapper.readTree(line);
                 } catch (JsonProcessingException e) {
-                    throw new OllamaException(
-                            OllamaException.Reason.PROTOCOL,
+                    throw new AiException(
+                            AiException.Reason.PROTOCOL,
                             "Ollama sent a response Puppy couldn't read.", e);
                 }
 
@@ -241,11 +266,11 @@ public final class OllamaClient {
             }
         } catch (IOException e) {
             if (Thread.currentThread().isInterrupted()) {
-                throw new OllamaException(
-                        OllamaException.Reason.INTERRUPTED, "Reply stopped.", e);
+                throw new AiException(
+                        AiException.Reason.INTERRUPTED, "Reply stopped.", e);
             }
-            throw new OllamaException(
-                    OllamaException.Reason.UNAVAILABLE,
+            throw new AiException(
+                    AiException.Reason.UNAVAILABLE,
                     "The connection to Ollama was interrupted before the reply finished.",
                     e);
         }
@@ -277,44 +302,44 @@ public final class OllamaClient {
         return mapper.writeValueAsBytes(root);
     }
 
-    private OllamaException unavailable(Throwable cause) {
-        return new OllamaException(
-                OllamaException.Reason.UNAVAILABLE,
+    private AiException unavailable(Throwable cause) {
+        return new AiException(
+                AiException.Reason.UNAVAILABLE,
                 "I can't reach Ollama at " + baseUri + ". Make sure Ollama is running, then try again.",
                 cause);
     }
 
-    private OllamaException errorFor(int status, String detail) {
+    private AiException errorFor(int status, String detail) {
         String readable = readableError(detail);
         String normalized = readable.toLowerCase(Locale.ROOT);
         if (status == 404 || normalized.contains("not found") || normalized.contains("no such model")) {
-            return new OllamaException(
-                    OllamaException.Reason.MODEL_NOT_FOUND,
+            return new AiException(
+                    AiException.Reason.MODEL_NOT_FOUND,
                     "The local model \"" + model + "\" isn't available. Run: ollama pull " + model);
         }
         if (normalized.contains("context length") || normalized.contains("too long")) {
-            return new OllamaException(
-                    OllamaException.Reason.HTTP,
+            return new AiException(
+                    AiException.Reason.HTTP,
                     "That request is too long for the local model. Remove a document or start a new conversation.");
         }
         String cleaned = readable.isBlank() ? "HTTP " + status : readable.replaceAll("\\s+", " ").strip();
         if (cleaned.length() > 180) {
             cleaned = cleaned.substring(0, 177) + "...";
         }
-        return new OllamaException(
-                OllamaException.Reason.HTTP, "Ollama returned an error: " + cleaned);
+        return new AiException(
+                AiException.Reason.HTTP, "Ollama returned an error: " + cleaned);
     }
 
-    private OllamaException errorForResponse(String detail) {
+    private AiException errorForResponse(String detail) {
         String readable = readableError(detail);
         String normalized = readable.toLowerCase(Locale.ROOT);
         if (normalized.contains("not found") || normalized.contains("no such model")) {
-            return new OllamaException(
-                    OllamaException.Reason.MODEL_NOT_FOUND,
+            return new AiException(
+                    AiException.Reason.MODEL_NOT_FOUND,
                     "The local model \"" + model + "\" isn't available. Run: ollama pull " + model);
         }
-        return new OllamaException(
-                OllamaException.Reason.HTTP,
+        return new AiException(
+                AiException.Reason.HTTP,
                 "Ollama returned an error: " + (readable.isBlank() ? "unknown error" : readable));
     }
 

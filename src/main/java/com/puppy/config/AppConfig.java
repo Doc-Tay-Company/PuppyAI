@@ -8,8 +8,9 @@ import java.util.Locale;
  *
  * <p>Values can be overridden with a system property such as
  * {@code -Dpuppy.alwaysOnTop=false} or with the environment variable
- * {@code PUPPY_ALWAYS_ON_TOP}. Runtime data (database, logs) will live in
- * {@link #dataDirectory()} once persistence is added in a later milestone.</p>
+ * {@code PUPPY_ALWAYS_ON_TOP}. The OpenRouter key can also come from
+ * {@code OPENROUTER_API_KEY}; keys entered in Settings are stored separately in
+ * the user's data directory by {@link AiSettingsStore}.</p>
  */
 public record AppConfig(
         String appName,
@@ -17,13 +18,16 @@ public record AppConfig(
         boolean alwaysOnTop,
         Path dataDirectory,
         String ollamaUrl,
-        String ollamaModel
+        String ollamaModel,
+        String openRouterApiKey,
+        String openRouterBaseUrl
 ) {
 
     public static final String APP_NAME = "Puppy AI";
     public static final String APP_VERSION = "1.0.0-SNAPSHOT";
     public static final String DEFAULT_OLLAMA_URL = "http://localhost:11434";
     public static final String DEFAULT_OLLAMA_MODEL = "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
+    public static final String DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
     public AppConfig {
         if (appName == null || appName.isBlank()) {
@@ -41,6 +45,13 @@ public record AppConfig(
         if (ollamaModel == null || ollamaModel.isBlank()) {
             throw new IllegalArgumentException("ollamaModel must not be blank");
         }
+        openRouterApiKey = openRouterApiKey == null || openRouterApiKey.isBlank()
+                ? null
+                : openRouterApiKey.strip();
+        if (openRouterBaseUrl == null || openRouterBaseUrl.isBlank()) {
+            throw new IllegalArgumentException("openRouterBaseUrl must not be blank");
+        }
+        openRouterBaseUrl = openRouterBaseUrl.strip();
     }
 
     /** Loads the configuration from system properties, environment and defaults. */
@@ -51,12 +62,48 @@ public record AppConfig(
                 readBoolean("alwaysOnTop", true),
                 defaultDataDirectory(),
                 readOrDefault("ollama.url", DEFAULT_OLLAMA_URL),
-                readOrDefault("ollama.model", DEFAULT_OLLAMA_MODEL));
+                readOrDefault("ollama.model", DEFAULT_OLLAMA_MODEL),
+                readOpenRouterApiKey(),
+                readOrDefault("openrouter.url", DEFAULT_OPENROUTER_BASE_URL));
+    }
+
+    public boolean hasOpenRouterApiKey() {
+        return openRouterApiKey != null && !openRouterApiKey.isBlank();
+    }
+
+    /** Never print the key; this representation is safe for logs. */
+    @Override
+    public String toString() {
+        return "AppConfig[appName=" + appName
+                + ", appVersion=" + appVersion
+                + ", alwaysOnTop=" + alwaysOnTop
+                + ", dataDirectory=" + dataDirectory
+                + ", ollamaUrl=" + ollamaUrl
+                + ", ollamaModel=" + ollamaModel
+                + ", openRouterApiKey="
+                + (hasOpenRouterApiKey() ? "configured" : "not configured")
+                + ", openRouterBaseUrl=" + openRouterBaseUrl
+                + "]";
     }
 
     private static String readOrDefault(String key, String defaultValue) {
         String value = read(key);
         return value == null ? defaultValue : value;
+    }
+
+    private static String readOpenRouterApiKey() {
+        String property = System.getProperty("puppy.openrouter.apiKey");
+        if (property != null && !property.isBlank()) {
+            return property.trim();
+        }
+        for (String name : new String[] {
+                "PUPPY_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"}) {
+            String value = System.getenv(name);
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private static Path defaultDataDirectory() {

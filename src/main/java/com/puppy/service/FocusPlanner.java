@@ -50,7 +50,8 @@ public final class FocusPlanner {
 
     static final int SESSION_GAP_MINUTES = 10;
     static final int MAX_SESSIONS_PER_SUBJECT_PER_DAY = 2;
-    static final int MAX_HORIZON_DAYS = 21;
+    static final int DEFAULT_HORIZON_DAYS = 7;
+    static final int MAX_HORIZON_DAYS = 365;
     static final int START_LEAD_MINUTES = 15;
     private static final DateTimeFormatter DEADLINE_LABEL = DateTimeFormatter.ofPattern("d MMM");
 
@@ -75,7 +76,7 @@ public final class FocusPlanner {
         List<Chunk> missed = new ArrayList<>();
         Map<String, Integer> missedMinutes = new LinkedHashMap<>();
 
-        LocalDate lastDate = horizonEnd(today, tasks);
+        LocalDate lastDate = horizonEnd(today, tasks, preferences);
         for (LocalDate date = today; !date.isAfter(lastDate) && !remaining.isEmpty();
              date = date.plusDays(1)) {
             // Anything whose deadline has passed can no longer satisfy the
@@ -137,14 +138,31 @@ public final class FocusPlanner {
         return new FocusPlan(sessions, warnings, today);
     }
 
-    private static LocalDate horizonEnd(LocalDate today, List<StudyTask> tasks) {
+    /**
+     * The final day the planner may use: the user's explicit plan end when
+     * present, otherwise the latest task deadline, otherwise one week from
+     * today. An explicit request wins even when a task deadline is later.
+     */
+    private static LocalDate horizonEnd(LocalDate today, List<StudyTask> tasks,
+                                        FocusPreferences preferences) {
+        LocalDate requested = preferences.planUntil();
         LocalDate latestDeadline = tasks.stream()
                 .map(StudyTask::deadline)
                 .filter(Objects::nonNull)
                 .max(LocalDate::compareTo)
-                .orElse(today.plusDays(6));
-        LocalDate last = latestDeadline.isBefore(today) ? today : latestDeadline;
-        LocalDate cap = today.plusDays(MAX_HORIZON_DAYS);
+                .orElse(null);
+        LocalDate last;
+        if (requested != null) {
+            last = requested;
+        } else if (latestDeadline != null) {
+            last = latestDeadline;
+        } else {
+            last = today.plusDays(DEFAULT_HORIZON_DAYS - 1L);
+        }
+        if (last.isBefore(today)) {
+            last = today;
+        }
+        LocalDate cap = today.plusDays(MAX_HORIZON_DAYS - 1L);
         return last.isAfter(cap) ? cap : last;
     }
 

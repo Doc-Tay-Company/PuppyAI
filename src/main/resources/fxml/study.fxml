@@ -17,7 +17,7 @@
         <Button text="_" onAction="#onMinimize" styleClass="window-button"/>
         <Button text="X" onAction="#onClose" styleClass="window-button"/>
     </HBox>
-    <HBox styleClass="study-content" alignment="CENTER" spacing="10" VBox.vgrow="ALWAYS">
+    <HBox styleClass="study-content" alignment="CENTER" spacing="10">
         <VBox styleClass="study-mascot-card" alignment="CENTER" spacing="8" HBox.hgrow="ALWAYS" prefWidth="170">
             <ImageView fx:id="studyMascotView" styleClass="mascot-view"
                        fitWidth="120" fitHeight="80" preserveRatio="true" smooth="false"/>

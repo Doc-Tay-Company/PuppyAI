@@ -89,6 +89,56 @@ class FocusFormatsTest {
     }
 
     @Test
+    void parsesExplicitPlanDurationsInDaysWeeksAndMonths() {
+        assertEquals(TODAY.plusDays(2),
+                FocusFormats.parsePlanEnd("trong 3 ngày", TODAY).orElseThrow(),
+                "Durations are inclusive");
+        assertEquals(TODAY.plusDays(9),
+                FocusFormats.parsePlanEnd("for 10 days", TODAY).orElseThrow());
+        assertEquals(TODAY.plusDays(13),
+                FocusFormats.parsePlanEnd("2 tuần", TODAY).orElseThrow());
+        assertEquals(TODAY.plusMonths(1).minusDays(1),
+                FocusFormats.parsePlanEnd("1 tháng", TODAY).orElseThrow());
+        assertEquals(TODAY.plusDays(364),
+                FocusFormats.parsePlanEnd("in 400 days", TODAY).orElseThrow(),
+                "A typo cannot create a plan longer than one year");
+        assertTrue(FocusFormats.parsePlanEnd("không giới hạn", TODAY).isEmpty());
+    }
+
+    @Test
+    void parsesExplicitDeadlineDatesForThePlan() {
+        assertEquals(LocalDate.of(2026, 11, 20),
+                FocusFormats.parsePlanEnd("deadline 20/11", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2026, 12, 1),
+                FocusFormats.parsePlanEnd("hạn chót 2026-12-01", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2026, 12, 20),
+                FocusFormats.parsePlanEnd("trước 20/12", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2026, 11, 25),
+                FocusFormats.parsePlanEnd("hạn nộp 25/11", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2026, 11, 21),
+                FocusFormats.parsePlanEnd("lịch hẹn 21/11", TODAY).orElseThrow());
+        assertEquals(LocalDate.of(2027, 1, 10),
+                FocusFormats.parsePlanEnd("deadline 10/1", TODAY).orElseThrow(),
+                "A date without a year uses its next non-past occurrence");
+        assertEquals(LocalDate.of(2026, 11, 20),
+                FocusFormats.parsePlanEnd(
+                        "deadline 20/11, mình rảnh 18:00-21:30", TODAY).orElseThrow(),
+                "A date wins over the free-time window in the same sentence");
+        assertEquals(TODAY, FocusFormats.parsePlanEnd("hôm nay", TODAY).orElseThrow());
+        assertEquals(TODAY.plusDays(1),
+                FocusFormats.parsePlanEnd("ngày mai", TODAY).orElseThrow());
+    }
+
+    @Test
+    void ignoresWeekdaysTimesAndUnrelatedTextWhenParsingThePlanEnd() {
+        assertTrue(FocusFormats.parsePlanEnd("mình rảnh thứ 2 tuần sau", TODAY).isEmpty(),
+                "A weekday phrase is not a plan duration");
+        assertTrue(FocusFormats.parsePlanEnd("18:00-21:30", TODAY).isEmpty());
+        assertTrue(FocusFormats.parsePlanEnd("", TODAY).isEmpty());
+        assertTrue(FocusFormats.parsePlanEnd(null, TODAY).isEmpty());
+    }
+
+    @Test
     void rejectsSingleTimesDatesAndOtherNonWindows() {
         assertTrue(FocusFormats.parseFreeTimeWindow("mình rảnh buổi tối").isEmpty());
         assertTrue(FocusFormats.parseFreeTimeWindow("8:00").isEmpty());
