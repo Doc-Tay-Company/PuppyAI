@@ -4,6 +4,12 @@ A desktop AI companion: a pixel-art puppy that lives on your desktop, chats with
 you, researches the web and runs study sessions. JavaFX frontend with pure Java
 services in a single desktop process — no Python, no separate server.
 
+**Implementation roadmap and status:** [Implementation Status](docs/IMPLEMENTATION_STATUS.md)
+is the single source of truth for scope, decisions, dependencies and acceptance
+criteria. The next planned features are SQLite persistence, supplemental chat
+instructions in Settings, and interactive **Multiple Quiz** inside Chat. These
+features are not implemented yet; the behavior below describes the current app.
+
 **Status: local and cloud AI chat plus Focus planning are wired up.** The app
 launches as a frameless, transparent, always-on-top puppy. The mascot stays in
 its desktop window while the menu and feature panels open in separate windows.
@@ -271,8 +277,9 @@ src/test/java/com/puppy/
 └── util/         DurationFormatsTest
 ```
 
-Planned packages from the implementation plan (`repository/`, `database/`,
-`web/`) are added in their milestones.
+Planned persistence packages (`repository/`, `database/`) are tracked in the
+[implementation status](docs/IMPLEMENTATION_STATUS.md). Web research is outside
+the current feature scope.
 
 ## Focus mode
 
