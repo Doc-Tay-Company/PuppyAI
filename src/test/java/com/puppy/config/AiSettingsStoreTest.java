@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -81,5 +83,36 @@ class AiSettingsStoreTest {
 
         assertEquals(Optional.empty(), store.selectedModelId());
         assertEquals(Optional.empty(), store.storedOpenRouterApiKey());
+    }
+
+    @Test
+    void cachesTheCatalogAndItsFetchTime() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+        Instant fetchedAt = Instant.parse("2026-11-18T09:30:00Z");
+
+        store.saveOpenRouterCatalog("{\"data\":[]}", fetchedAt);
+
+        AiSettingsStore reloaded = new AiSettingsStore(tempDirectory);
+        assertEquals(Optional.of("{\"data\":[]}"), reloaded.openRouterCatalog());
+        assertEquals(Optional.of(fetchedAt), reloaded.openRouterCatalogFetchedAt());
+    }
+
+    @Test
+    void remembersRecentModelsNewestFirstAndBounded() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+
+        store.rememberRecentModelId("openrouter:a/one");
+        store.rememberRecentModelId("openrouter:a/two");
+        store.rememberRecentModelId("openrouter:a/three");
+        store.rememberRecentModelId("openrouter:a/four");
+        store.rememberRecentModelId("openrouter:a/five");
+        store.rememberRecentModelId("openrouter:a/six");
+        store.rememberRecentModelId("openrouter:a/two");
+
+        List<String> recent = new AiSettingsStore(tempDirectory).recentModelIds();
+        assertEquals(5, recent.size());
+        assertEquals("openrouter:a/two", recent.get(0));
+        assertEquals("openrouter:a/six", recent.get(1));
+        assertFalse(recent.contains("openrouter:a/one"));
     }
 }

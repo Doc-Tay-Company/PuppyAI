@@ -16,24 +16,42 @@ public final class AiModels {
     public static final String OPENROUTER_GEMINI_PRO =
             OPENROUTER_PROVIDER + ":google/gemini-2.5-pro";
 
+    /** The short cloud suggestions kept in the Settings combo box. */
+    public static final List<String> SUGGESTED_OPENROUTER_IDS = List.of(
+            OPENROUTER_GEMINI_FLASH,
+            OPENROUTER_GEMINI_FLASH_LITE,
+            OPENROUTER_GEMINI_PRO);
+
     private AiModels() {
     }
 
     /**
-     * Returns the full catalog, with the configured local model last. Cloud
-     * models come first because they are the default when their key exists.
+     * Returns the built-in fallback catalog, with the configured local model
+     * last. Cloud models come first because they are the default when their key
+     * exists. The full OpenRouter list replaces the cloud part once it has been
+     * fetched and cached.
      */
     public static List<AiModel> catalog(String localModelName) {
         Objects.requireNonNull(localModelName, "localModelName");
         return List.of(
                 new AiModel(OPENROUTER_GEMINI_FLASH, OPENROUTER_PROVIDER, "OpenRouter",
-                        "google/gemini-2.5-flash", "Gemini 2.5 Flash", true),
+                        "google/gemini-2.5-flash", "Gemini 2.5 Flash", true,
+                        AiModelDetails.unknown()),
                 new AiModel(OPENROUTER_GEMINI_FLASH_LITE, OPENROUTER_PROVIDER, "OpenRouter",
-                        "google/gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", true),
+                        "google/gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", true,
+                        AiModelDetails.unknown()),
                 new AiModel(OPENROUTER_GEMINI_PRO, OPENROUTER_PROVIDER, "OpenRouter",
-                        "google/gemini-2.5-pro", "Gemini 2.5 Pro", true),
-                new AiModel(localModelId(localModelName), OLLAMA_PROVIDER, "Ollama",
-                        localModelName, friendlyModelName(localModelName), false));
+                        "google/gemini-2.5-pro", "Gemini 2.5 Pro", true,
+                        AiModelDetails.unknown()),
+                localModel(localModelName));
+    }
+
+    /** The configured Ollama model with its local-only metadata. */
+    public static AiModel localModel(String localModelName) {
+        Objects.requireNonNull(localModelName, "localModelName");
+        return new AiModel(localModelId(localModelName), OLLAMA_PROVIDER, "Ollama",
+                localModelName, friendlyModelName(localModelName), false,
+                AiModelDetails.local());
     }
 
     public static String localModelId(String modelName) {

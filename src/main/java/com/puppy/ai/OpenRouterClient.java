@@ -54,14 +54,24 @@ public final class OpenRouterClient implements ChatProvider {
     private final URI completionsUri;
     private final String apiKey;
     private final String model;
+    private final boolean supportsJson;
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public OpenRouterClient(String apiKey, String model) {
-        this(apiKey, model, DEFAULT_BASE_URL);
+        this(apiKey, model, DEFAULT_BASE_URL, true);
     }
 
     public OpenRouterClient(String apiKey, String model, String baseUrl) {
+        this(apiKey, model, baseUrl, true);
+    }
+
+    /**
+     * @param supportsJson false when the catalog says the model does not accept
+     *                     {@code response_format: json_object}; Puppy then asks
+     *                     for JSON in the prompt and parses tolerantly
+     */
+    public OpenRouterClient(String apiKey, String model, String baseUrl, boolean supportsJson) {
         Objects.requireNonNull(apiKey, "apiKey");
         Objects.requireNonNull(model, "model");
         String cleanedKey = apiKey.strip();
@@ -73,6 +83,7 @@ public final class OpenRouterClient implements ChatProvider {
         if (this.model.isEmpty()) {
             throw new IllegalArgumentException("An OpenRouter model is required");
         }
+        this.supportsJson = supportsJson;
 
         String cleanedUrl = Objects.requireNonNull(baseUrl, "baseUrl").strip();
         while (cleanedUrl.endsWith("/")) {
@@ -135,7 +146,7 @@ public final class OpenRouterClient implements ChatProvider {
     public String chat(List<ChatMessage> messages, Consumer<String> onToken) throws AiException {
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(onToken, "onToken");
-        HttpRequest request = request(messages, true);
+        HttpRequest request = request(messages, true, false);
         HttpResponse<InputStream> response = send(request);
         if (response.statusCode() != 200) {
             throw errorFor(response.statusCode(), readErrorBody(response.body()));
@@ -146,16 +157,33 @@ public final class OpenRouterClient implements ChatProvider {
     @Override
     public String jsonChat(List<ChatMessage> messages) throws AiException {
         Objects.requireNonNull(messages, "messages");
-        HttpRequest request = request(messages, false);
-        HttpResponse<String> response = sendString(request);
-        if (response.statusCode() != 200) {
-            throw errorFor(response.statusCode(), response.body());
+        if (messages.isEmpty()) {
+            throw new AiException(
+                    AiException.Reason.PROTOCOL, "Puppy has no message to send to the model.");
         }
-        return readSingle(response.body());
+        List<ChatMessage> effective = supportsJson ? messages : withJsonInstruction(messages);
+        HttpResponse<String> response = sendString(request(effective, false, supportsJson));
+        if (response.statusCode() == 200) {
+            return readSingle(response.body());
+        }
+
+        // The catalog may be stale or the endpoint may report JSON mode only at
+        // request time. Retry once with a prompt-only JSON request before
+        // showing an error, so more models can drive Focus and quizzes.
+        if (supportsJson && isJsonModeRejection(response.statusCode(), response.body())) {
+            List<ChatMessage> fallback = withJsonInstruction(messages);
+            HttpResponse<String> retry = sendString(request(fallback, false, false));
+            if (retry.statusCode() == 200) {
+                return readSingle(retry.body());
+            }
+            throw errorFor(retry.statusCode(), retry.body());
+        }
+        throw errorFor(response.statusCode(), response.body());
     }
 
-    private HttpRequest request(List<ChatMessage> messages, boolean streaming) throws AiException {
-        byte[] body = requestBody(messages, streaming);
+    private HttpRequest request(List<ChatMessage> messages, boolean streaming, boolean jsonMode)
+            throws AiException {
+        byte[] body = requestBody(messages, streaming, jsonMode);
         return HttpRequest.newBuilder(completionsUri)
                 .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/json")
@@ -166,7 +194,8 @@ public final class OpenRouterClient implements ChatProvider {
                 .build();
     }
 
-    private byte[] requestBody(List<ChatMessage> messages, boolean streaming) throws AiException {
+    private byte[] requestBody(List<ChatMessage> messages, boolean streaming, boolean jsonMode)
+            throws AiException {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", model);
         ArrayNode contents = root.putArray("messages");
@@ -193,7 +222,7 @@ public final class OpenRouterClient implements ChatProvider {
         root.put("stream", streaming);
         root.put("temperature", streaming ? CHAT_TEMPERATURE : JSON_TEMPERATURE);
         root.put("max_tokens", streaming ? CHAT_OUTPUT_TOKENS : JSON_OUTPUT_TOKENS);
-        if (!streaming) {
+        if (!streaming && jsonMode) {
             root.putObject("response_format").put("type", "json_object");
         }
 
@@ -203,6 +232,36 @@ public final class OpenRouterClient implements ChatProvider {
             throw new AiException(
                     AiException.Reason.PROTOCOL, "Puppy couldn't prepare the request.", e);
         }
+    }
+
+    /**
+     * Inserts a JSON-only system instruction after any existing system prompts.
+     * Focus already asks for JSON, but chat titles and future features also use
+     * jsonChat, so the fallback has to stand on its own.
+     */
+    private static List<ChatMessage> withJsonInstruction(List<ChatMessage> messages) {
+        List<ChatMessage> augmented = new java.util.ArrayList<>(messages.size() + 1);
+        int index = 0;
+        while (index < messages.size() && messages.get(index).role() == MessageRole.SYSTEM) {
+            augmented.add(messages.get(index));
+            index++;
+        }
+        augmented.add(ChatMessage.system(
+                "Return only one valid JSON object. Do not use Markdown fences and do not "
+                        + "add any text outside the JSON."));
+        augmented.addAll(messages.subList(index, messages.size()));
+        return augmented;
+    }
+
+    private static boolean isJsonModeRejection(int status, String body) {
+        if (status != 400 && status != 404 && status != 422) {
+            return false;
+        }
+        String text = body == null ? "" : body.toLowerCase(Locale.ROOT);
+        return text.contains("response_format")
+                || text.contains("json_object")
+                || text.contains("json mode")
+                || text.contains("structured output");
     }
 
     private HttpResponse<InputStream> send(HttpRequest request) throws AiException {

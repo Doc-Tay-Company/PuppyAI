@@ -11,6 +11,7 @@ import java.util.Objects;
  * @param modelName    exact id sent to the provider API
  * @param displayName  short name shown in the UI
  * @param cloud        true when the request leaves this computer
+ * @param details      catalog facts such as context size, price and JSON support
  */
 public record AiModel(
         String id,
@@ -18,7 +19,8 @@ public record AiModel(
         String providerName,
         String modelName,
         String displayName,
-        boolean cloud
+        boolean cloud,
+        AiModelDetails details
 ) {
 
     public AiModel {
@@ -27,6 +29,30 @@ public record AiModel(
         requireText(providerName, "providerName");
         requireText(modelName, "modelName");
         requireText(displayName, "displayName");
+        details = details == null ? AiModelDetails.unknown() : details;
+    }
+
+    /** Keeps the original six-argument call sites readable. */
+    public AiModel(String id, String providerId, String providerName, String modelName,
+                   String displayName, boolean cloud) {
+        this(id, providerId, providerName, modelName, displayName, cloud,
+                AiModelDetails.unknown());
+    }
+
+    public int contextLength() {
+        return details.contextLength();
+    }
+
+    public String pricingLabel() {
+        return details.pricingLabel();
+    }
+
+    public boolean supportsJson() {
+        return details.supportsJson();
+    }
+
+    public boolean free() {
+        return details.free();
     }
 
     public String locationLabel() {

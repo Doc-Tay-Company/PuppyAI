@@ -31,6 +31,15 @@
         <Label fx:id="modelDetailLabel" text="Model" styleClass="muted-copy" wrapText="true"/>
         <Label fx:id="modelHintLabel" text="Choose the model Puppy should use."
                styleClass="muted-copy" wrapText="true"/>
+        <HBox alignment="CENTER_LEFT" spacing="8">
+            <Button text="Browse all models…" onAction="#onBrowseModels"
+                    styleClass="quiet-button"/>
+            <Button fx:id="refreshModelsButton" text="Refresh models"
+                    onAction="#onRefreshModels" styleClass="quiet-button"/>
+        </HBox>
+        <Label fx:id="modelCatalogStatus" text="" styleClass="muted-copy" wrapText="true"/>
+        <Label fx:id="modelWarningLabel" text="" styleClass="muted-copy"
+               wrapText="true" managed="false" visible="false"/>
         <Label fx:id="aiStatusLabel" text="" styleClass="muted-copy"
                wrapText="true" managed="false" visible="false"/>
     </VBox>

@@ -5,14 +5,24 @@ import com.puppy.ai.AiModels;
 import com.puppy.config.AiSettingsStore;
 import com.puppy.config.AppConfig;
 import com.puppy.model.ChatMessage;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -153,7 +163,101 @@ class ModelServiceTest {
         assertThrows(IllegalStateException.class, service::clearOpenRouterKey);
     }
 
+    @Test
+    void keepsASavedModelThatIsNoLongerInTheCatalog() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+        store.saveSelectedModelId("openrouter:acme/removed-model");
+        store.saveOpenRouterCatalog(cachedCatalog(), Instant.now());
+
+        ModelService service = service(null, store);
+
+        assertEquals("openrouter:acme/removed-model", service.selectedModel().id());
+        assertTrue(service.selectedModel().cloud());
+        assertNotNull(service.selectionWarning());
+        assertTrue(service.selectionWarning().contains("no longer"));
+        assertTrue(service.availableModels().stream()
+                .anyMatch(model -> model.id().equals("openrouter:acme/removed-model")));
+        assertEquals("openrouter:acme/removed-model",
+                service.modelPickerModels().get(0).id(),
+                "The kept model must stay visible in the short picker");
+    }
+
+    @Test
+    void refreshesThePublicCatalogCachesItAndReloadsOffline() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/api/v1/models", exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, cachedCatalog());
+        });
+        server.start();
+        try {
+            AiSettingsStore store = new AiSettingsStore(tempDirectory);
+            ModelService service = service(null, store, baseUrl(server));
+
+            ModelService.CatalogRefreshResult result =
+                    service.refreshModelCatalog().join();
+
+            assertTrue(result.success(), result.message());
+            assertEquals(1, result.modelCount());
+            assertEquals(1, requests.get());
+            assertEquals(1, service.catalogModelCount());
+            assertTrue(service.catalogFetchedAt().isPresent());
+            assertTrue(store.openRouterCatalog().isPresent());
+            assertTrue(service.availableModels().stream()
+                    .anyMatch(model -> model.modelName().equals("acme/cached-chat")));
+            assertTrue(service.availableModels().stream().anyMatch(model -> !model.cloud()));
+
+            ModelService reloaded = service(null, new AiSettingsStore(tempDirectory), baseUrl(server));
+            assertEquals(1, reloaded.catalogModelCount(),
+                    "A cached catalog should load without another HTTP request");
+            assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void failedRefreshKeepsTheCachedListAndTheSelectedModel() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+        store.saveSelectedModelId("openrouter:acme/cached-chat");
+        store.saveOpenRouterCatalog(cachedCatalog(), Instant.now());
+        ModelService service = service(null, store, "http://127.0.0.1:1/api/v1");
+        Instant fetchedAt = service.catalogFetchedAt().orElseThrow();
+
+        ModelService.CatalogRefreshResult result =
+                service.refreshModelCatalog().join();
+
+        assertFalse(result.success());
+        assertTrue(result.message() != null && !result.message().isBlank());
+        assertEquals(1, service.catalogModelCount(),
+                "A network failure must not clear the cached catalog");
+        assertEquals("openrouter:acme/cached-chat", service.selectedModel().id());
+        assertEquals(fetchedAt, service.catalogFetchedAt().orElseThrow());
+        assertEquals(1, service.availableModels().stream()
+                .filter(model -> model.modelName().equals("acme/cached-chat"))
+                .count());
+    }
+
+    @Test
+    void staleCacheStillProvidesModelsUntilTheBackgroundRefreshFinishes() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+        store.saveOpenRouterCatalog(cachedCatalog(),
+                Instant.now().minus(Duration.ofHours(25)));
+
+        ModelService service = service(null, store);
+
+        assertTrue(service.isCatalogStale());
+        assertEquals(1, service.catalogModelCount());
+        assertTrue(service.availableModels().stream()
+                .anyMatch(model -> model.modelName().equals("acme/cached-chat")));
+    }
+
     private ModelService service(String environmentKey, AiSettingsStore store) {
+        return service(environmentKey, store, AppConfig.DEFAULT_OPENROUTER_BASE_URL);
+    }
+
+    private ModelService service(String environmentKey, AiSettingsStore store, String baseUrl) {
         AppConfig config = new AppConfig(
                 "Puppy AI",
                 "test",
@@ -162,7 +266,32 @@ class ModelServiceTest {
                 "http://localhost:11434",
                 LOCAL_MODEL,
                 environmentKey,
-                AppConfig.DEFAULT_OPENROUTER_BASE_URL);
-        return new ModelService(config, store);
+                baseUrl);
+        return new ModelService(config, store, Runnable::run);
+    }
+
+    private static String baseUrl(HttpServer server) {
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1";
+    }
+
+    private static String cachedCatalog() {
+        return """
+                {"data":[
+                  {"id":"acme/cached-chat","name":"Cached Chat","context_length":32768,
+                   "architecture":{"output_modalities":["text"]},
+                   "pricing":{"prompt":"0.000001","completion":"0.000002"},
+                   "supported_parameters":["response_format"]}
+                ]}
+                """;
+    }
+
+    private static void respond(HttpExchange exchange, int status, String body)
+            throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
     }
 }

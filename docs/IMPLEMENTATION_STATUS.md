@@ -411,31 +411,41 @@ progress or scores is intentionally excluded, not a missing persistence task.
   with `stream: true`, sends `Authorization: Bearer <key>`, and forwards only
   assistant content fragments (private reasoning is ignored). JSON extraction
   uses the same endpoint without streaming and requests
-  `response_format: {"type":"json_object"}`. Authentication, insufficient
-  credits, rate limits, missing models, network, timeout and safety failures
-  have friendly messages; the key is redacted from error text.
-- **Model catalog:** OpenRouter Gemini 2.5 Flash, Gemini 2.5 Flash-Lite, Gemini
-  2.5 Pro and the configured local Qwen model. All four stay listed even before
-  a key exists so the picker can lead the user to the key field. With no
-  explicit choice Puppy prefers Gemini 2.5 Flash for speed when a key exists and
-  otherwise uses the local model; choosing the local model is persisted and
-  honoured on later launches. Selecting a cloud model without a key is allowed
-  and keeps the choice so the key can be entered next.
-- **Local key storage:** `AiSettingsStore` writes the model choice to
-  `%LOCALAPPDATA%\PuppyAI\ai.properties` and the key to
-  `%LOCALAPPDATA%\PuppyAI\ai-secrets.properties`. Writes are atomic and
+  `response_format: {"type":"json_object"}` when the catalog says the model
+  supports it. Models without JSON mode get a prompt-only "return only JSON"
+  instruction, and a provider rejection of `response_format` triggers one
+  automatic retry; `FocusJsonParser` tolerates fences and surrounding text.
+  Authentication, insufficient credits, rate limits, missing models, network,
+  timeout and safety failures have friendly messages; the key is redacted from
+  error text.
+- **Model catalog:** `OpenRouterModelCatalog` reads the public
+  `GET {baseUrl}/models` endpoint without a key and keeps text-output models with
+  `context_length >= 16384`. Image, audio and moderation-only entries are
+  dropped; `:free` and JSON-capability are recorded as metadata. The fallback is
+  Gemini 2.5 Flash, Gemini 2.5 Flash-Lite, Gemini 2.5 Pro and the configured
+  local Qwen model, so all four stay usable before the first fetch. The raw JSON
+  and fetch time are cached in settings for 24 hours, refreshed on the background
+  thread pool, and reused offline. A failed refresh only warns and never clears
+  the previous list. A saved model that disappears from the catalog is rebuilt
+  from its saved id and kept selected with a visible warning instead of silently
+  switching the user's choice. With no explicit choice Puppy prefers Gemini 2.5
+  Flash for speed when a key exists and otherwise uses the local model.
+- **Local key storage:** `AiSettingsStore` writes non-secret settings, including
+  the selected model, recent models and catalog cache, to `puppy.db` and the key
+  to `%LOCALAPPDATA%\PuppyAI\ai-secrets.properties`. Writes are atomic and
   owner-only permissions are applied where the platform supports POSIX. A key
   in `OPENROUTER_API_KEY`, `PUPPY_OPENROUTER_API_KEY` or
   `-Dpuppy.openrouter.apiKey` wins over a saved key and makes the Settings field
   read-only. Keys never enter the repository, tests, docs or logs.
-- **Settings UI:** live model picker with `OpenRouter · <model>` and
-  `<model> · local` labels, cloud/local pill, model detail and hint, and a key
-  section shown directly below the picker only for an OpenRouter model. The
-  section contains a masked `PasswordField`, Save key / Remove key, a
-  configured/not-configured pill, environment-managed state and action status.
-  The local model section stays visible, needs no key, and hides the key section
-  from the layout. The Settings window recomputes its height when the section
-  appears or hides so nothing clips.
+- **Settings UI:** the compact picker keeps the selected model, three Gemini
+  suggestions, recent models and the local model. **Browse all models…** opens a
+  searchable table of the full catalog with Cloud / Free / JSON-capable / context
+  filters and context/price columns. **Refresh models** shows a live-updated
+  timestamp and keeps the old list on network failure. The cloud/local pill,
+  model metadata, key section and environment-managed state behave as before;
+  selecting a cloud model without a key reveals the key field. The Settings
+  window recomputes its height when the section appears or hides so nothing
+  clips.
 - **Chat and Focus:** the Model reply names the selected provider and whether it
   is cloud or local. Errors distinguish a missing or rejected key, insufficient
   credits, rate limits, blocked prompts and network failures.
@@ -443,14 +453,18 @@ progress or scores is intentionally excluded, not a missing persistence task.
   planning works through OpenRouter or Ollama while `FocusPlanner` still makes
   every scheduling decision.
 - **Tests:** `OpenRouterClientTest` covers SSE streaming, header-only keys, JSON
-  mode, blocked prompts, redacted errors and unreachable hosts.
-  `AiSettingsStoreTest` covers persistence, separation of selection and secret
-  files, validation, removal and damaged files. `ModelServiceTest` covers
-  cloud-first defaults, explicit local choices, selecting a cloud model without
-  a key, clearing and restoring the key, switching and environment-key
-  precedence. `FxmlLayoutTest` verifies the picker labels, masked key field,
+  mode, prompt-only JSON fallback, automatic retry without JSON mode, blocked
+  prompts, redacted errors and unreachable hosts.
+  `OpenRouterModelCatalogTest` covers filtering, metadata/price labels and the
+  keyless public endpoint. `AiSettingsStoreTest` covers persistence, separation
+  of selection and secret files, catalog/recent-model caching, validation,
+  removal and damaged files. `ModelServiceTest` covers cloud-first defaults,
+  explicit local choices, selecting a cloud model without a key, clearing and
+  restoring the key, switching, environment-key precedence, catalog refresh and
+  offline cache, failed-refresh preservation and keeping a saved model that left
+  the catalog. `FxmlLayoutTest` verifies the picker labels, masked key field,
   key-section visibility for cloud versus local, and Settings fit. The suite is
-  109 tests, 0 failures.
+  137 tests, 0 failures.
 
 ## Completed (mascot and chat polish)
 

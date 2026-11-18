@@ -2,6 +2,7 @@ package com.puppy.controller;
 
 import com.puppy.ai.AiModel;
 import com.puppy.service.ModelService;
+import com.puppy.ui.ModelBrowserDialog;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -9,10 +10,15 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.layout.VBox;
+import javafx.stage.Window;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -25,6 +31,10 @@ import java.util.function.Consumer;
  * label.</p>
  */
 public class SettingsController {
+
+    private static final DateTimeFormatter CATALOG_TIME =
+            DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm")
+                    .withZone(ZoneId.systemDefault());
 
     @FXML
     private CheckBox alwaysOnTopCheck;
@@ -40,6 +50,15 @@ public class SettingsController {
 
     @FXML
     private Label modelHintLabel;
+
+    @FXML
+    private Button refreshModelsButton;
+
+    @FXML
+    private Label modelCatalogStatus;
+
+    @FXML
+    private Label modelWarningLabel;
 
     @FXML
     private Label aiStatusLabel;
@@ -148,7 +167,7 @@ public class SettingsController {
         if (modelService == null) {
             return;
         }
-        List<AiModel> models = modelService.availableModels();
+        List<AiModel> models = modelService.modelPickerModels();
         AiModel selected = modelService.selectedModel();
 
         refreshingModelChoice = true;
@@ -166,9 +185,23 @@ public class SettingsController {
         modelLocationPill.setText(cloud ? "Cloud" : "Local");
         modelLocationPill.getStyleClass().removeAll("cloud-pill", "local-pill");
         modelLocationPill.getStyleClass().add(cloud ? "cloud-pill" : "local-pill");
-        modelDetailLabel.setText(cloud
-                ? "OpenRouter model: " + selected.modelName()
-                : "Local model: " + selected.displayName());
+        if (cloud) {
+            StringBuilder detail = new StringBuilder("OpenRouter model: ")
+                    .append(selected.modelName());
+            if (selected.contextLength() > 0) {
+                detail.append(" · ").append(selected.details().contextLabel()).append(" context");
+            }
+            String price = selected.pricingLabel();
+            if (price != null && !price.isBlank()) {
+                detail.append(" · ").append(price);
+            }
+            if (!selected.supportsJson()) {
+                detail.append(" · JSON via prompt fallback");
+            }
+            modelDetailLabel.setText(detail.toString());
+        } else {
+            modelDetailLabel.setText("Local model: " + selected.displayName());
+        }
 
         if (cloud) {
             if (modelService.hasOpenRouterKey()) {
@@ -186,6 +219,8 @@ public class SettingsController {
                             + "OpenRouter model above for cloud replies.");
         }
 
+        updateCatalogStatus();
+
         openRouterKeySection.setVisible(cloud);
         openRouterKeySection.setManaged(cloud);
         if (cloud) {
@@ -194,6 +229,38 @@ public class SettingsController {
             openRouterKeyField.clear();
         }
         notifyLayoutChanged();
+    }
+
+    /** Shows the cached-list timestamp and any warning about a missing saved model. */
+    private void updateCatalogStatus() {
+        if (modelCatalogStatus == null || modelService == null) {
+            return;
+        }
+        Optional<Instant> fetchedAt = modelService.catalogFetchedAt();
+        int count = modelService.catalogModelCount();
+        if (fetchedAt.isPresent() && count > 0) {
+            String staleNote = modelService.isCatalogStale()
+                    ? " · refresh recommended"
+                    : "";
+            modelCatalogStatus.setText("Updated " + CATALOG_TIME.format(fetchedAt.get())
+                    + " · " + count + " OpenRouter models cached" + staleNote + ".");
+        } else {
+            modelCatalogStatus.setText(
+                    "Not updated yet · showing built-in suggestions. "
+                            + "Choose Refresh models to load the full OpenRouter list.");
+        }
+
+        String warning = modelService.selectionWarning();
+        if (modelWarningLabel != null) {
+            boolean visible = warning != null && !warning.isBlank();
+            modelWarningLabel.setText(visible ? warning : "");
+            modelWarningLabel.setVisible(visible);
+            modelWarningLabel.setManaged(visible);
+            modelWarningLabel.getStyleClass().remove("error-copy");
+            if (visible) {
+                modelWarningLabel.getStyleClass().add("error-copy");
+            }
+        }
     }
 
     private void updateOpenRouterKeySection() {
@@ -260,6 +327,53 @@ public class SettingsController {
         }
         AiModel chosen = modelChoice.getValue();
         if (chosen == null) {
+            return;
+        }
+        selectModel(chosen);
+    }
+
+    @FXML
+    private void onBrowseModels() {
+        if (modelService == null) {
+            return;
+        }
+        Window owner = modelChoice.getScene() == null
+                ? null
+                : modelChoice.getScene().getWindow();
+        Optional<AiModel> chosen = ModelBrowserDialog.show(
+                owner, modelService.availableModels(), modelService.selectedModel());
+        chosen.ifPresent(this::selectModel);
+    }
+
+    @FXML
+    private void onRefreshModels() {
+        if (modelService == null) {
+            return;
+        }
+        refreshModelsButton.setDisable(true);
+        modelCatalogStatus.setText("Refreshing the OpenRouter model list…");
+        modelService.refreshModelCatalog().whenComplete((result, failure) -> runOnUi(() -> {
+            refreshModelsButton.setDisable(false);
+            refreshAiSection();
+            if (failure != null || result == null || !result.success()) {
+                String detail = result != null && result.message() != null
+                        ? " " + result.message()
+                        : " Check your internet connection.";
+                String unchanged = detail.contains("unchanged") || detail.contains("Keeping")
+                        ? ""
+                        : " The previous list is unchanged.";
+                showStatus("Couldn't refresh the model list." + detail + unchanged, true);
+            } else if (result.message() != null && !result.message().isBlank()) {
+                showStatus(result.message(), true);
+            } else {
+                showStatus("Model list updated: " + result.modelCount()
+                        + " OpenRouter models available.", false);
+            }
+        }));
+    }
+
+    private void selectModel(AiModel chosen) {
+        if (chosen == null || modelService == null) {
             return;
         }
         saveSetting(() -> modelService.selectModel(chosen.id()), () -> {

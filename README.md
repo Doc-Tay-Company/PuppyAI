@@ -46,23 +46,28 @@ export JAVA_HOME="C:/path/to/jdk-25"   # Git Bash
 
 ## AI models and API keys
 
-Puppy offers three cloud models and one local fallback:
+Puppy offers the full OpenRouter text-model catalog plus one local fallback.
+The compact picker keeps three Gemini suggestions and recent choices; **Browse
+all models…** opens the searchable full list with context size, price and
+free/JSON tags. Only text models with at least a 16k context are listed.
 
-| Choice | Location | Needs |
+| Suggested choice | Location | Needs |
 | --- | --- | --- |
 | Gemini 2.5 Flash | Cloud (OpenRouter) | OpenRouter API key |
 | Gemini 2.5 Flash-Lite | Cloud (OpenRouter) | OpenRouter API key |
 | Gemini 2.5 Pro | Cloud (OpenRouter) | OpenRouter API key |
 | Qwen3.5 9B | Local | Ollama with the model installed |
 
-Open **More > Settings** to switch models. All four choices are listed even
-before a key exists, so you can select an OpenRouter model first. Selecting one
-reveals an **OpenRouter API key** section directly below the model picker; the
-local model keeps its name and never asks for a key. With no saved choice, a
-configured key defaults to **Gemini 2.5 Flash**. Choosing the local model keeps
-chat on this machine. The choice is saved in
-`%LOCALAPPDATA%\PuppyAI\puppy.db` (or the platform equivalent). The old
-`ai.properties` model choice is imported once; that legacy file is left untouched.
+Open **More > Settings** to switch models. Cloud models are listed even before a
+key exists, so you can select one first. Selecting one reveals an **OpenRouter
+API key** section directly below the model picker; the local model keeps its name
+and never asks for a key. With no saved choice, a configured key defaults to
+**Gemini 2.5 Flash**. Choosing the local model keeps chat on this machine. The
+choice, the recent-model list and a 24-hour cached copy of the OpenRouter catalog
+are saved in `%LOCALAPPDATA%\PuppyAI\puppy.db` (or the platform equivalent).
+**Refresh models** re-fetches the public `/models` endpoint; a network failure
+only shows a warning and never removes the saved list. The old `ai.properties`
+model choice is imported once; that legacy file is left untouched.
 
 To add a key:
 

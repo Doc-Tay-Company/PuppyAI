@@ -52,7 +52,10 @@ public final class ServiceRegistry implements AutoCloseable {
         try {
             var settings = new SettingsRepository(database);
             this.appSettings = new AppSettingsService(config, settings);
-            this.modelService = new ModelService(config, new AiSettingsStore(config.dataDirectory(), settings));
+            this.modelService = new ModelService(
+                    config,
+                    new AiSettingsStore(config.dataDirectory(), settings),
+                    threadManager.executor());
             this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
             this.quizzes = new QuizRepository(database);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
@@ -73,6 +76,9 @@ public final class ServiceRegistry implements AutoCloseable {
             return;
         }
         started = true;
+        // Refresh the public model catalog in the background. A missing network
+        // only leaves the cached or built-in list in place.
+        modelService.refreshModelCatalogIfStale();
     }
 
     public boolean isStarted() {

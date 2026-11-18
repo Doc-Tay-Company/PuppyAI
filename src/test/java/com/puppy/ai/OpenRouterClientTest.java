@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -104,8 +105,59 @@ class OpenRouterClientTest {
     }
 
     @Test
-    void reportsInvalidKeysWithoutEchoingThem() throws Exception {
-        server.createContext("/api/v1/chat/completions", exchange ->
+    void jsonFallbackForModelsWithoutJsonModeAsksInThePrompt() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server.createContext("/api/v1/chat/completions", exchange -> {
+            requestBody.set(readBody(exchange));
+            respondJson(exchange, 200,
+                    "{\"choices\":[{\"message\":{\"role\":\"assistant\","
+                            + "\"content\":\"{\\\"tasks\\\":[]}\"},\"finish_reason\":\"stop\"}]}");
+        });
+
+        OpenRouterClient client = new OpenRouterClient(
+                TEST_KEY, "acme/no-json-mode", baseUrl(), false);
+        String reply = client.jsonChat(List.of(
+                ChatMessage.system("Puppy rules"),
+                ChatMessage.user("Extract the timetable")));
+
+        assertEquals("{\"tasks\":[]}", reply);
+        String body = requestBody.get();
+        assertFalse(body.contains("\"response_format\""),
+                "Models without JSON mode must not receive response_format");
+        assertTrue(body.contains("Return only one valid JSON object"),
+                "The fallback must ask for JSON in the prompt");
+        assertTrue(body.contains("\"role\":\"system\""),
+                "The instruction must be a system message");
+    }
+
+    @Test
+    void retriesWithoutJsonModeWhenTheProviderRejectsIt() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<String> secondBody = new AtomicReference<>();
+        server.createContext("/api/v1/chat/completions", exchange -> {
+            String body = readBody(exchange);
+            if (calls.getAndIncrement() == 0) {
+                respondJson(exchange, 400,
+                        "{\"error\":{\"message\":\"response_format is not supported\","
+                                + "\"code\":400}}");
+                return;
+            }
+            secondBody.set(body);
+            respondJson(exchange, 200,
+                    "{\"choices\":[{\"message\":{\"role\":\"assistant\","
+                            + "\"content\":\"{\\\"tasks\\\":[]}\"},\"finish_reason\":\"stop\"}]}");
+        });
+
+        String reply = client().jsonChat(List.of(ChatMessage.user("Extract the timetable")));
+
+        assertEquals("{\"tasks\":[]}", reply);
+        assertEquals(2, calls.get(), "Puppy should retry once without JSON mode");
+        assertFalse(secondBody.get().contains("\"response_format\""));
+        assertTrue(secondBody.get().contains("Return only one valid JSON object"));
+    }
+
+    @Test
+    void reportsInvalidKeysWithoutEchoingThem() throws Exception {        server.createContext("/api/v1/chat/completions", exchange ->
                 respondJson(exchange, 401,
                         "{\"error\":{\"message\":\"Invalid API key: " + TEST_KEY
                                 + "\",\"code\":401}}"));

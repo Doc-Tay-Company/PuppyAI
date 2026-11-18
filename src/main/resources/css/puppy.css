@@ -131,6 +131,29 @@
     -fx-text-fill: #8a7263;
 }
 
+.model-browser {
+    -fx-background-color: #fff4e8;
+}
+
+.model-browser .content {
+    -fx-padding: 8 12 12 12;
+}
+
+.model-browser .table-view {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 10;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
+}
+
+.model-browser .table-row-cell:selected {
+    -fx-background-color: #f38d38;
+}
+
+.model-browser .table-row-cell:selected .text {
+    -fx-fill: white;
+}
+
 .thinking-label {
     -fx-padding: 2 10;
     -fx-font-style: italic;
