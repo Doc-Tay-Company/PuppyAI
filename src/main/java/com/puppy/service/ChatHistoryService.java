@@ -1,6 +1,7 @@
 package com.puppy.service;
 
 import com.puppy.model.StoredConversation;
+import com.puppy.model.QuizDefinition;
 import com.puppy.repository.ChatRepository;
 import com.puppy.repository.SettingsRepository;
 
@@ -18,6 +19,7 @@ public final class ChatHistoryService implements AutoCloseable {
     private final SettingsRepository settings;
     private final Map<String, StoredConversation> conversations = new LinkedHashMap<>();
     private final Map<String, StoredConversation> dirty = new LinkedHashMap<>();
+    private final Map<String, QuizDefinition> quizzes = new LinkedHashMap<>();
     private final ExecutorService writer = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "puppy-history");
         thread.setDaemon(true);
@@ -29,6 +31,14 @@ public final class ChatHistoryService implements AutoCloseable {
         this.repository = repository;
         this.settings = settings;
         repository.load().forEach(chat -> conversations.put(chat.id(), chat));
+        repository.quizzes().forEach(quiz -> quizzes.put(quiz.messageId(), quiz));
+        for (StoredConversation chat : conversations.values()) {
+            for (var message : chat.messages()) {
+                if (message.entryType().equals("QUIZ") && !quizzes.containsKey(message.id())) {
+                    throw new IllegalStateException("A saved quiz entry is missing its definition. Restore a verified backup.");
+                }
+            }
+        }
         activeId = settings.get("activeConversation").orElse("");
     }
 
@@ -58,7 +68,18 @@ public final class ChatHistoryService implements AutoCloseable {
         if (snapshot == null) {
             return;
         }
-        repository.save(snapshot);
+        List<QuizDefinition> definitions;
+        synchronized (this) {
+            definitions = snapshot.messages().stream().filter(message -> message.entryType().equals("QUIZ"))
+                    .map(message -> {
+                        QuizDefinition quiz = quizzes.get(message.id());
+                        if (quiz == null) {
+                            throw new IllegalStateException("The quiz definition is not available for saving.");
+                        }
+                        return quiz;
+                    }).toList();
+        }
+        repository.saveWithQuizzes(snapshot, definitions);
         synchronized (this) {
             dirty.remove(id, snapshot);
         }
@@ -67,6 +88,18 @@ public final class ChatHistoryService implements AutoCloseable {
     public synchronized CompletableFuture<Void> activate(String id) {
         activeId = id;
         return CompletableFuture.runAsync(() -> settings.put("activeConversation", id), writer);
+    }
+
+    /** Registers validated content in memory; its next chat save commits both atomically. */
+    public synchronized void registerQuiz(QuizDefinition quiz) {
+        QuizDefinition old = quizzes.putIfAbsent(quiz.messageId(), quiz);
+        if (old != null && !old.equals(quiz)) {
+            throw new IllegalArgumentException("That chat entry already has a different quiz.");
+        }
+    }
+
+    public synchronized java.util.Optional<QuizDefinition> quiz(String messageId) {
+        return java.util.Optional.ofNullable(quizzes.get(messageId));
     }
 
     public synchronized CompletableFuture<Void> title(String id, String title, String state) {

@@ -70,7 +70,7 @@
                         <TextField fx:id="messageInput" promptText="Ask me anything"
                                    onAction="#sendMessage" HBox.hgrow="ALWAYS"/>
                         <ComboBox fx:id="modeChoice" styleClass="composer-mode"
-                                  prefWidth="118"/>
+                                  prefWidth="140"/>
                         <Button text="Send" onAction="#sendMessage" fx:id="sendButton"
                                 styleClass="primary-button"/>
                     </HBox>

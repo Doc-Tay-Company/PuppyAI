@@ -276,6 +276,7 @@ public class MascotController {
                 mascotStateService, services.focusService(), this::closePanel, this::collapseToMascot,
                 this::returnToMainMenu, this::toggleChatExpansion, this::openFocusPanel);
         chatController.attachHistory(services.chatHistory());
+        chatController.attachQuiz(services.quizService());
         return view;
     }
 
@@ -553,6 +554,9 @@ public class MascotController {
     }
 
     private void hidePanelStage(Panel panel) {
+        if (panel == Panel.CHAT && chatController != null) {
+            chatController.close();
+        }
         Stage panelStage = panelStages.get(panel);
         if (panelStage != null) {
             panelStage.hide();

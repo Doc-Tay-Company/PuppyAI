@@ -13,8 +13,9 @@ features already exist.
 
 Current goal: local SQLite persistence, editable supplemental chat instructions
 in Settings, and interactive multiple-choice quizzes entirely inside Chat.
-Database delivery and supplemental chat instructions are implemented and
-verified. The interactive quiz feature remains pending; definition storage is ready.
+Database delivery, supplemental chat instructions and interactive Chat quizzes
+are implemented and verified automatically. Live-provider/manual release checks
+remain outstanding as listed below.
 
 ### Database delivery plan (approved 2026-11-18)
 
@@ -130,6 +131,57 @@ actual results and a concrete remaining-feature plan. No separate plan file.
   prompt precedence is expressed by the application, not a guarantee of model
   behavior. Existing non-failing JavaFX/native-access/logging warnings remain.
 
+### Multiple Quiz delivery outcome (2026-11-18)
+
+- QUIZ-1 through QUIZ-3 are implemented. The Chat composer has **Multiple Quiz**
+  and a `/quiz` keyboard fallback. Topic-only, attachment-only and combined
+  requests use the selected provider; defaults are 5 Medium questions, bounded
+  to 1-20, with ordered per-question/mixed difficulty support.
+- `QuizService` makes two explicit JSON requests: extract the requested count
+  and difficulty allocation, then generate exactly that definition. Both use
+  application-controlled contracts, not supplemental chat instructions. No
+  automatic retries occur. Strict bounded parsing rejects malformed/extra JSON,
+  invalid counts/difficulties/options, duplicate questions and incomplete output.
+  Document prompts are bounded/untrusted reference material; insufficient context
+  and missing filename citations produce errors rather than invented fallbacks.
+- `QuizAttempt` owns selections, checked flags, position, completion and scores
+  in memory only. Navigation never submits; checked answers lock. Confirming
+  Finish with unchecked questions scores those as skipped. Correct + Incorrect
+  + Skipped equals the definition's question count. No model calls grade/retry.
+- Each typed QUIZ history entry renders an independent Puppy-styled `QuizCard`:
+  Markdown questions/explanations, four wrapping radio options, labelled
+  progress/difficulty/counters, Check answer, Previous/Next, confirmed Finish,
+  neutral results, read-only Review, confirmed Retry quiz and Back to chat.
+  There is no nested quiz scroll pane. Normal Chat remains usable afterward.
+- Cards retain their own attempts while switching chats in the running app.
+  Restart rebuilds entirely fresh attempts from saved definitions. Typed entry
+  metadata survives history snapshots; question answers/scores/review state are
+  never serialized into chat messages or SQLite. The definition's correct
+  answer is persisted as learning content, not the learner's answer.
+- `ChatHistoryService` restores and caches definitions off the JavaFX thread.
+  Chat entry creation/conversion and definition/questions commit in one JDBC
+  transaction; idempotent snapshot/retry writes preserve immutable definitions.
+  Failed commits roll back both, retain validated content in memory and expose
+  Retry save without another AI call. Answering is disabled until saving succeeds.
+- Pending generation has an inline Cancel action. Cancel, closing Chat or
+  switching conversations invalidates the request and interrupts the worker.
+  Late callbacks cannot populate another chat. Specific failures offer manual
+  Retry generation. If the app exits during generation, the placeholder restores
+  as interrupted; the original user request can be reused to generate again.
+- Verification: **`mvn -q test` - 144 tests, 0 failures, 0 errors, 0 skipped**.
+  New focused coverage exercises defaults/1/20/mixed difficulty, bounded document
+  context/citations, strict error handling/interruption, deterministic attempts,
+  atomic rollback/save retry, typed restoration and no persisted attempt state.
+  An isolated JavaFX probe with a local HTTP stub tests actual composer generation,
+  checking/results/review/retry confirmations, independent cards, normal Chat,
+  invalid-output retry, failed-save retry with unchanged model-call count,
+  cancellation on chat switch and fresh attempts after database reopen.
+- Remaining verification: live Ollama/OpenRouter generation quality, manual
+  small-screen/keyboard/screen-reader review, and real desktop shutdown/restart
+  smoke checks. Structural validation cannot prove factual correctness or
+  grounding; model output still needs user judgment. Existing non-failing
+  JavaFX/native-access/logging warnings remain.
+
 ### Concrete next implementation plan
 
 PROMPT-1 UI decisions (2026-11-18): **More instructions** sits between Local
@@ -140,24 +192,67 @@ Retain unsaved drafts while the app runs, without leave dialogs. Enforce a
 4,000-character limit with a live counter and no silent truncation or enable
 switch. Saved preferences apply to subsequent chat requests only.
 
-1. **QUIZ-1 - generation and learning logic:** use existing `QuizDefinition` and
-   `ModelService.jsonChat`; extract count/difficulty requests (5/Medium defaults,
-   1-20 questions, mixed per-question difficulty), validate the complete result,
-   and implement deterministic in-memory checking/navigation/scoring/retry.
-   Test malformed output, wrong counts/options, mixed difficulty and no AI calls
-   for grading or retry. No attempt/score fields may enter persisted history.
-2. **QUIZ-2 remaining integration:** atomically attach a definition to an ordered
-   QUIZ chat entry; connect repository reads to typed history restoration.
-   Preserve entry types when UI snapshots are rebuilt. Reopening after process
-   restart must create an entirely unanswered attempt from the saved definition.
-3. **QUIZ-3 - Chat-only interaction:** add Multiple Quiz to the composer and
-   original Puppy-styled cards, one question at a time, Previous/Next, Check
-   answer, locked feedback, final score/review and Retry. Keep normal Chat usable;
-   isolate attempts/cancellation callbacks by chat and quiz ID.
-4. **VERIFY-1 - release gate:** run focused tests then the full suite, manually
-   verify local/cloud generation, failure/quit/restart flows and screen fit,
-   update README for newly shipped behavior and close ledger items only with
-   recorded evidence. Retest that quiz selections/scores never reach SQLite.
+1. **VERIFY-1 - live model smoke checks:** exercise topic/document quizzes through
+   local Ollama and cloud OpenRouter, including 1/20 questions, mixed difficulty,
+   requested languages, insufficient sources and rejected/rate-limited requests.
+   Confirm user-facing errors and review factual quality without logging private
+   source content or keys. Do not mark unavailable provider checks as passed.
+2. **VERIFY-1 - manual UX/restart checks:** verify long Markdown content, wrapped
+   options, small windows with History open, keyboard navigation, confirmations,
+   multiple independent cards, normal Chat and repeated source/save retry flows.
+   Restart the desktop app and confirm only definitions survive, not attempts.
+3. **VERIFY-1 - closure:** record manual results here, fix any directly related
+   failures, rerun affected tests/the full suite as appropriate, and close the
+   verification ledger only when those release checks actually pass. Additional
+   features remain outside scope until explicitly requested.
+
+### Quiz mockup review and confirmed UX (2026-11-18)
+
+The two-frame low-fidelity mockup is the layout direction, not a pixel-perfect
+specification. Keep the quiz inside an assistant message and use original Puppy
+styling. This review updates the earlier all-questions-required completion rule;
+the confirmed interaction is implemented in the delivery outcome above.
+
+- Each generated quiz gets an independent inline card in chronological chat
+  history. Normal Chat and the composer remain usable after generation. Card
+  height adapts to content within Chat's existing scroll area; avoid an extra
+  nested scrolling quiz pane.
+- Show quiz title, Question X of N, per-question difficulty, answered count and
+  labelled Correct/Incorrect counters. Use text/icons as well as colors for
+  feedback and keyboard-accessible answer controls. Keep English UI labels;
+  generated content follows the requested language or prompt language.
+- Select an option, then **Check answer**. Show correct/incorrect feedback,
+  the correct option and explanation immediately; lock that question until
+  Retry. **Previous/Next** only navigate and never submit implicitly. An option
+  selected but not checked is still unanswered for scoring/completion.
+- At the end, **Finish** may submit unanswered questions only after confirmation
+  stating their number. They earn zero and are counted separately as skipped.
+  Cancel keeps the attempt open. Correct + Incorrect + Skipped must equal the
+  question count, and the score denominator includes all questions.
+- Use a neutral results summary with correct/total and category totals. Primary
+  action **Retry quiz** reuses the definition with no AI request. Secondary
+  **Review** opens read-only Previous/Next navigation with selected/correct
+  answers, explanations and **Back to results**. Skipped answers are revealed
+  only after finishing. **Back to chat** focuses the composer, not a new quiz.
+- Retrying clears only that card's in-memory attempt; confirm when answers would
+  be discarded. Switching chats retains independent attempts while the app runs.
+  Restart discards every attempt, answer, score and position, but keeps definitions.
+- The mockup's 30-question total is illustrative. Keep 1-20 questions, default
+  5/Medium, and support explicit per-question/mixed difficulty requests.
+- Topic-only questions may use model knowledge. With documents, ground questions
+  in supplied text and cite filename/page in explanations where available.
+  Insufficient source material produces a clear explanation, not invented facts
+  or a silently reduced question count. Distractors should be plausible and of
+  the same category; structural validation cannot guarantee factual correctness.
+- Reuse existing Markdown for questions/explanations and wrap plain-text answer
+  options. New equation rendering, images and external research are out of scope.
+- Generation shows an inline loading state and **Cancel**. Enable answering only
+  after the entire definition validates and saves atomically with its chat entry.
+  Closing Chat or switching conversations cancels pending generation; stale
+  callbacks cannot place a quiz in another conversation. Generation failures
+  show a specific error and manual **Retry generation**; no hidden AI retries.
+  A failed database save retains validated content in memory for **Retry save**,
+  without another model request.
 
 ### Pre-delivery baseline (historical code inspection, 2026-11-18)
 
@@ -200,7 +295,7 @@ switch. Saved preferences apply to subsequent chat requests only.
 | Quiz sources | Typed topic/description and/or the current chat's attached documents, using the selected local or cloud model. Existing attachment limits and cloud disclosure still apply. |
 | Quiz setup | Default **5 questions / Medium** without an extra setup round. Users specify **1-20** questions and difficulty in the chat request, including different difficulties for individual questions. |
 | Quiz questions | Single-answer multiple choice, exactly four options and one correct answer per question. Include an explanation and per-question difficulty. |
-| Interaction | Show one question at a time, with Previous/Next. Choose an option then Check answer; reveal the answer/explanation and lock that question. Unanswered questions can be skipped; final submission requires all questions answered. |
+| Interaction | Show one question at a time, with Previous/Next. Choose an option then Check answer; reveal the answer/explanation and lock that question. Finish allows unanswered questions after confirmation, scoring them zero and listing them as skipped. |
 | Scoring/retry | Score by the number of correct answers; final score and review. Retry reuses saved questions without another model call and starts a fresh attempt. |
 | Quiz persistence boundary | Save only quiz definitions: questions, options, correct answers, explanations, difficulty and their link to the chat. **Never persist attempts, user selections, scores, navigation position or progress**, including completed attempts. Every quiz restarts unanswered after app restart. Scores and review exist only in memory. |
 | Timers | No quiz timer. Do not restore running Study/Focus countdowns; persisted Focus completion is separate from countdown state. |
@@ -269,10 +364,10 @@ have passed; record the actual validation command/result when closing an item.
 | DB-3 | Durable history models/repository/service; save active/archived chats, message timing and extracted attachments; restore history | DB-1 | Complete - reopen/retry/UI history tests passed |
 | DB-4 | Focus repositories, transactional mutations and full state restoration; adapt controller worker/UI handoff | DB-1 | Complete - persistence/rollback/worker tests passed |
 | PROMPT-1 | Supplemental instructions service integration, Settings editor with Save/Reset, bounded composition and request snapshots | DB-2 | Complete - 130-test suite passed; live-provider adherence/manual visual review pending |
-| QUIZ-1 | Quiz models, structured request extraction/generation/parser, per-question difficulty and deterministic in-memory attempt logic | None | Not started |
-| QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | In progress - definition schema/repository complete; runtime entry/card integration awaits quiz feature |
-| QUIZ-3 | Multiple Quiz composer mode and Puppy-styled interactive Chat cards, navigation/feedback/score/review/retry | QUIZ-2 | Not started |
-| VERIFY-1 | Cross-feature restart/failure/regression tests, manual local/cloud smoke checks and current-behavior documentation | DB-2, DB-3, DB-4, PROMPT-1, QUIZ-3 | Not started |
+| QUIZ-1 | Quiz models, structured request extraction/generation/parser, per-question difficulty and deterministic in-memory attempt logic | None | Complete - strict generation and attempt tests passed |
+| QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | Complete - atomic rollback/retry and typed restart tests passed |
+| QUIZ-3 | Multiple Quiz composer mode and Puppy-styled interactive Chat cards, navigation/feedback/score/review/retry | QUIZ-2 | Complete - isolated JavaFX/HTTP integration probe passed |
+| VERIFY-1 | Cross-feature restart/failure/regression tests, manual local/cloud smoke checks and current-behavior documentation | DB-2, DB-3, DB-4, PROMPT-1, QUIZ-3 | In progress - 144 automated tests passed; live-provider/manual release checks pending |
 
 Suggested delivery order: DB-1 -> DB-2 -> DB-3 -> DB-4 -> PROMPT-1 ->
 QUIZ-1 -> QUIZ-2 -> QUIZ-3 -> VERIFY-1. Dependencies in the ledger, not this
@@ -329,8 +424,9 @@ suggested sequence, determine what can proceed independently.
   wrong counts, incomplete output and provider errors show a retryable failure;
   never present a partial or fabricated quiz as a completed generation.
 - UI tests cover selection -> Check answer -> locked feedback, Previous/Next
-  navigation, skipped questions, blocked final submission with unanswered items,
-  deterministic score/review and fresh retry. No AI call for checking/review/retry.
+  navigation, confirmation/cancellation when finishing unanswered questions,
+  correct/incorrect/skipped totals, read-only review and fresh retry. No AI call
+  for checking/review/retry. Navigation never implicitly submits an answer.
 - Save/reopen a chat and reconstruct its interactive card. Restart always clears
   every selection, score, feedback and navigation position while retaining quiz
   definitions. Verify database contents contain no attempts or user answers;
@@ -364,10 +460,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | --- | --- | --- |
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
-| 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage delivery and automated checks above; interactive quizzes remain milestone 6 |
+| 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage, atomic quiz integration and automated checks above |
 | 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
-| 6 | Study mode, settings, integration | Partial: Pomodoro/settings and supplemental instructions complete; Chat quizzes pending (QUIZ-1 through QUIZ-3) |
+| 6 | Study mode, settings, integration | Core features shipped: Pomodoro/settings, supplemental instructions and Chat quizzes; remaining mascot-priority/integration follow-ups and manual verification deferred |
 | 7 | Testing, optimization, packaging | Pending |
 
 ## Completed (milestone 1)
@@ -616,6 +712,8 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | `AiSettingsStore` | Persists model choice through SQLite, imports legacy selection once and keeps the OpenRouter key in its separate secret file; never used by controllers directly. |
 | `Database` / repositories | Serialized JDBC transactions, schema lifecycle and durable chat/Focus/settings/quiz-definition storage. |
 | `ChatHistoryService` | Owns durable chat snapshots, active-chat state, title updates, queued writes and failed-save retry. |
+| `QuizService` | Extracts quiz setup and generates validated definitions through the selected model; worker-only, with no grading or persistence logic. |
+| `QuizAttempt` / `QuizCard` | Pure in-memory learning state and JavaFX presentation; checking/review/retry never call AI or persist attempts. |
 | `AppSettingsService` | Cached always-on-top and additional-instructions preferences; changes publish after a successful SQLite commit. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
 | `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
@@ -686,7 +784,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
   cannot guarantee physical erasure from SSDs, filesystem snapshots or backups.
 - History is loaded into memory at startup; pagination/search/retention controls
   are deferred. Large long-lived histories may require future paging work.
-- Multiple Quiz generation/UI is not implemented; see QUIZ-1 through QUIZ-3 above.
+- Quiz factual accuracy/grounding depend on the selected model. Strict structural
+  validation/citation checks cannot prove an answer or explanation is correct.
+- Quiz generation uses two model requests and can be slow on local models. There
+  are no hidden retries; generation retries require an explicit user action.
 - Regenerating a Focus plan replaces the scheduled session list, so hand-made
   sessions are lost unless they are recreated. Manual and generated sessions are
   not yet linked to source tasks.

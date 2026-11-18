@@ -27,7 +27,7 @@ public record QuizDefinition(String id, String messageId, String title, List<Que
             Objects.requireNonNull(difficulty);
             options = List.copyOf(options);
             options.forEach(QuizDefinition::requireText);
-            if (options.size() != 4 || options.stream().map(String::strip).map(String::toLowerCase)
+            if (options.size() != 4 || options.stream().map(String::strip).map(value -> value.toLowerCase(java.util.Locale.ROOT))
                     .distinct().count() != 4 || correctIndex < 0 || correctIndex >= 4) {
                 throw new IllegalArgumentException("A question needs four distinct options and one correct index.");
             }

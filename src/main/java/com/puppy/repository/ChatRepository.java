@@ -6,6 +6,7 @@ import com.puppy.database.Database;
 import com.puppy.model.DocumentAttachment;
 import com.puppy.model.StoredConversation;
 import com.puppy.model.StoredMessage;
+import com.puppy.model.QuizDefinition;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -68,6 +69,14 @@ public final class ChatRepository {
     }
 
     public void save(StoredConversation conversation) {
+        saveWithQuizzes(conversation, List.of());
+    }
+
+    public List<QuizDefinition> quizzes() {
+        return database.call(QuizRepository::loadAll);
+    }
+
+    public void saveWithQuizzes(StoredConversation conversation, List<QuizDefinition> quizzes) {
         database.transaction(connection -> {
             try (var statement = connection.prepareStatement("INSERT INTO conversations(id,title,updated_at,title_state) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at")) {
                 statement.setString(1, conversation.id());
@@ -79,7 +88,7 @@ public final class ChatRepository {
             // Upsert rather than replacing messages: quiz foreign keys remain intact.
             for (int i = 0; i < conversation.messages().size(); i++) {
                 StoredMessage message = conversation.messages().get(i);
-                try (var statement = connection.prepareStatement("INSERT INTO messages(id,conversation_id,position,role,content,filenames,elapsed_ms,status,entry_type) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,filenames=excluded.filenames,elapsed_ms=excluded.elapsed_ms,status=excluded.status")) {
+                try (var statement = connection.prepareStatement("INSERT INTO messages(id,conversation_id,position,role,content,filenames,elapsed_ms,status,entry_type) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,filenames=excluded.filenames,elapsed_ms=excluded.elapsed_ms,status=excluded.status,entry_type=excluded.entry_type")) {
                     statement.setString(1, message.id());
                     statement.setString(2, conversation.id());
                     statement.setInt(3, i);
@@ -107,6 +116,13 @@ public final class ChatRepository {
                     statement.setBoolean(6, document.truncated());
                     statement.executeUpdate();
                 }
+            }
+            for (QuizDefinition quiz : quizzes) {
+                if (conversation.messages().stream().noneMatch(message -> message.id().equals(quiz.messageId())
+                        && message.entryType().equals("QUIZ"))) {
+                    throw new IllegalArgumentException("A quiz must belong to this conversation's quiz entry.");
+                }
+                QuizRepository.save(connection, quiz);
             }
             return null;
         });

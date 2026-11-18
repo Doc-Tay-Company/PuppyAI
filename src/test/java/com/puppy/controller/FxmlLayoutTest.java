@@ -250,7 +250,7 @@ class FxmlLayoutTest {
                         (ComboBox<ChatController.ComposerMode>) chatStage.getScene().lookup("#modeChoice");
                 assertEquals("Ask me anything", messageInput.getPromptText());
                 assertEquals("📌", ((Button) chatStage.getScene().lookup("#attachButton")).getText());
-                assertEquals(List.of("Chat", "Focus plan", "Model", "Help"),
+                assertEquals(List.of("Chat", "Focus plan", "Multiple Quiz", "Model", "Help"),
                         modeChoice.getItems().stream().map(Object::toString).toList());
                 int messageCount = messages.getChildren().size();
                 messageInput.setText("   ");

@@ -11,6 +11,10 @@ import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.model.StoredMessage;
 import com.puppy.model.StoredConversation;
+import com.puppy.model.QuizDefinition;
+import com.puppy.model.QuizAttempt;
+import com.puppy.service.QuizService;
+import com.puppy.service.QuizException;
 import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
 import com.puppy.service.FocusFormats;
@@ -18,6 +22,7 @@ import com.puppy.service.FocusPlanningException;
 import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
 import com.puppy.ui.MarkdownRenderer;
+import com.puppy.ui.QuizCard;
 import com.puppy.util.DurationFormats;
 import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
@@ -75,6 +80,7 @@ public class ChatController {
     enum ComposerMode {
         CHAT("Chat"),
         FOCUS("Focus plan"),
+        QUIZ("Multiple Quiz"),
         MODEL("Model"),
         HELP("Help");
 
@@ -176,6 +182,10 @@ public class ChatController {
     private PendingFocus pendingFocus;
     private FocusPreferences pendingPreferences;
     private ChatHistoryService chatHistory;
+    private QuizService quizService;
+    private String activeQuizId;
+    private final java.util.Map<String, QuizJob> quizJobs = new java.util.HashMap<>();
+    private final java.util.Map<String, QuizCard> quizCards = new java.util.HashMap<>();
     private String currentConversationId = java.util.UUID.randomUUID().toString();
     private final java.util.Set<String> titleRequested = new java.util.HashSet<>();
     private boolean restoring;
@@ -249,9 +259,13 @@ public class ChatController {
         updateComposerState();
     }
 
+    public void attachQuiz(QuizService quizService) {
+        this.quizService = Objects.requireNonNull(quizService);
+    }
+
     @FXML
     private void sendMessage() {
-        if (responding || extracting) {
+        if (responding || extracting || preparingToQuit) {
             return;
         }
 
@@ -276,6 +290,11 @@ public class ChatController {
         }
 
         switch (mode) {
+            case QUIZ -> {
+                startQuiz(message);
+                resetComposerMode();
+                messageInput.requestFocus();
+            }
             case FOCUS -> {
                 if (startFocus(message)) {
                     resetComposerMode();
@@ -300,6 +319,206 @@ public class ChatController {
                 }
                 sendChat(chatMessage);
             }
+        }
+    }
+
+    private void startQuiz(String request) {
+        if (quizService == null || chatHistory == null) {
+            showSaveStatus("Quiz generation is not available. Reopen Chat and try again.", false);
+            return;
+        }
+        if (request.isBlank() && attachments.isEmpty()) {
+            showAttachmentStatus("Describe a topic or attach documents for your quiz.", true);
+            return;
+        }
+        pendingFocus = null;
+        addMessage("user", request.isBlank() ? "Make a quiz from the attached documents." : request,
+                attachments.stream().map(DocumentAttachment::fileName).toList());
+        String id = java.util.UUID.randomUUID().toString();
+        QuizJob job = new QuizJob(id, currentConversationId, request, List.copyOf(attachments));
+        quizJobs.put(id, job);
+        currentMessages.add(new Message(id, "assistant", "Generating quiz...", List.of(), 0L,
+                StoredMessage.Status.GENERATING));
+        updateSelectedConversation(true);
+        addMessageNode(currentMessages.getLast());
+        runQuiz(job);
+        scrollToBottom();
+    }
+
+    private void runQuiz(QuizJob job) {
+        if (responding || extracting || preparingToQuit) {
+            showSaveStatus("Finish or cancel the current request before retrying quiz generation.", false);
+            return;
+        }
+        responding = true;
+        activeQuizId = job.id;
+        job.error = null;
+        int generation = ++responseGeneration;
+        replaceQuizMessage(job, "Generating quiz...", StoredMessage.Status.GENERATING, "TEXT");
+        updateSelectedConversation();
+        java.util.concurrent.CompletableFuture<Void> savedRequest = latestSave;
+        refreshQuizJob(job);
+        updateComposerState();
+        mascotStateService.setState(MascotState.THINKING);
+        try {
+            inFlight = executor.submit(() -> {
+                try {
+                    savedRequest.join();
+                    if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
+                        return;
+                    }
+                    QuizDefinition definition = quizService.generate(job.id, job.request, job.documents);
+                    Platform.runLater(() -> completeQuiz(job, definition, generation));
+                } catch (QuizException e) {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        Platform.runLater(() -> failQuiz(job, generation, e.getMessage()));
+                    }
+                } catch (java.util.concurrent.CompletionException e) {
+                    Platform.runLater(() -> failQuiz(job, generation,
+                            "Quiz generation did not start because the request could not be saved. Retry after checking local storage."));
+                } catch (RuntimeException e) {
+                    Platform.runLater(() -> failQuiz(job, generation,
+                            "Quiz generation failed unexpectedly. Please retry generation."));
+                } finally {
+                    Thread.interrupted();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            failQuiz(job, generation, "The app is shutting down. Quiz generation did not start.");
+        }
+    }
+
+    private void completeQuiz(QuizJob job, QuizDefinition definition, int generation) {
+        if (!isCurrentQuiz(job, generation)) {
+            return;
+        }
+        job.definition = definition;
+        chatHistory.registerQuiz(definition);
+        replaceQuizMessage(job, definition.title(), StoredMessage.Status.COMPLETE, "QUIZ");
+        updateSelectedConversation();
+        activeQuizId = null;
+        refreshQuizJob(job);
+        finishReplyUi(true);
+        latestSave.whenComplete((unused, error) -> Platform.runLater(() -> {
+            job.ready = error == null;
+            job.error = error == null ? null
+                    : "Quiz generated, but local saving failed. Retry save without generating again.";
+            refreshQuizJob(job);
+        }));
+    }
+
+    private boolean isCurrentQuiz(QuizJob job, int generation) {
+        return responding && generation == responseGeneration && job.id.equals(activeQuizId)
+                && job.conversationId.equals(currentConversationId);
+    }
+
+    private void failQuiz(QuizJob job, int generation, String error) {
+        if (!isCurrentQuiz(job, generation)) {
+            return;
+        }
+        job.error = error;
+        replaceQuizMessage(job, "Quiz generation failed. Retry generation to try again.",
+                StoredMessage.Status.ERROR, "TEXT");
+        updateSelectedConversation();
+        activeQuizId = null;
+        refreshQuizJob(job);
+        finishReplyUi(false);
+    }
+
+    private void replaceQuizMessage(QuizJob job, String text, StoredMessage.Status status, String entryType) {
+        for (int i = 0; i < currentMessages.size(); i++) {
+            Message old = currentMessages.get(i);
+            if (old.id().equals(job.id)) {
+                currentMessages.set(i, new Message(old.id(), old.role(), text, old.attachments(),
+                        old.elapsedMillis(), status, entryType));
+                return;
+            }
+        }
+        throw new IllegalStateException("The active quiz entry is missing from its conversation.");
+    }
+
+    private MessageBubble addQuizNode(Message message) {
+        VBox content = new VBox(8);
+        content.getStyleClass().add("quiz-message");
+        content.setMaxWidth(BUBBLE_MAX_WIDTH);
+        messagesBox.getChildren().add(content);
+        QuizJob job = quizJobs.get(message.id());
+        if (job != null) {
+            job.content = content;
+            refreshQuizJob(job);
+        } else {
+            showQuizCard(content, message.id());
+        }
+        return new MessageBubble(content, content, content, message.text());
+    }
+
+    private void showQuizCard(VBox content, String messageId) {
+        QuizDefinition definition = chatHistory.quiz(messageId).orElseThrow(
+                () -> new IllegalStateException("A saved quiz definition is unavailable."));
+        QuizCard card = quizCards.computeIfAbsent(messageId,
+                id -> new QuizCard(new QuizAttempt(definition), () -> messageInput.requestFocus()));
+        if (card.getParent() instanceof javafx.scene.layout.Pane oldParent) {
+            oldParent.getChildren().remove(card);
+        }
+        content.getChildren().setAll(card);
+    }
+
+    private void refreshQuizJob(QuizJob job) {
+        if (job.content == null) {
+            return;
+        }
+        if (job.ready) {
+            job.content.getStyleClass().remove("quiz-card");
+            showQuizCard(job.content, job.id);
+            return;
+        }
+        job.content.getChildren().clear();
+        job.content.getStyleClass().remove("quiz-card");
+        job.content.getStyleClass().add("quiz-card");
+        Label status = new Label(job.error != null ? job.error
+                : job.definition != null ? "Saving your quiz..." : "Generating quiz...");
+        status.setWrapText(true);
+        status.getStyleClass().add(job.error == null ? "muted-copy" : "error-copy");
+        Button action = new Button(job.error != null
+                ? job.definition != null ? "Retry save" : "Retry generation" : "Cancel");
+        action.getStyleClass().add("quiet-button");
+        action.setDisable(job.definition != null && job.error == null);
+        action.setOnAction(event -> {
+            if (job.definition != null) {
+                action.setDisable(true);
+                chatHistory.retry().whenComplete((unused, error) -> Platform.runLater(() -> {
+                    job.ready = error == null;
+                    job.error = error == null ? null : "Local saving still failed. Check storage and retry save.";
+                    refreshQuizJob(job);
+                }));
+            } else if (job.error != null) {
+                runQuiz(job);
+            } else if (job.id.equals(activeQuizId)) {
+                cancelResponse();
+            }
+        });
+        if (job.definition != null && job.error == null) {
+            job.content.getChildren().setAll(status);
+        } else {
+            job.content.getChildren().setAll(status, action);
+        }
+    }
+
+    private static final class QuizJob {
+        private final String id;
+        private final String conversationId;
+        private final String request;
+        private final List<DocumentAttachment> documents;
+        private QuizDefinition definition;
+        private VBox content;
+        private String error;
+        private boolean ready;
+
+        private QuizJob(String id, String conversationId, String request, List<DocumentAttachment> documents) {
+            this.id = id;
+            this.conversationId = conversationId;
+            this.request = request;
+            this.documents = List.copyOf(documents);
         }
     }
 
@@ -386,6 +605,10 @@ public class ChatController {
             startFocusCommand(input);
             return true;
         }
+        if ("/quiz".equals(command)) {
+            startQuiz(input.strip().substring("/quiz".length()).strip());
+            return true;
+        }
         String reply = switch (command) {
             case "/model" -> modelCommandReply();
             case "/help" -> helpReply();
@@ -410,6 +633,7 @@ public class ChatController {
                 Choose an option next to the message box, then press Send.
 
                 - **Focus plan** - read your pinned files or typed subject description
+                - **Multiple Quiz** - create 1-20 learning questions from a topic or pinned files (default 5, Medium)
                 - **Model** - show the selected model and provider
                 - **Help** - show this list
 
@@ -931,6 +1155,13 @@ public class ChatController {
 
     private void cancelResponse() {
         boolean wasResponding = responding;
+        if (activeQuizId != null) {
+            QuizJob job = quizJobs.get(activeQuizId);
+            job.error = "Quiz generation cancelled. You can retry when ready.";
+            replaceQuizMessage(job, "Quiz generation cancelled.", StoredMessage.Status.INTERRUPTED, "TEXT");
+            activeQuizId = null;
+            refreshQuizJob(job);
+        }
         if (wasResponding && streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
             flushPendingTokens();
             Message message = currentMessages.get(streamingMessageIndex);
@@ -1128,7 +1359,8 @@ public class ChatController {
         List<ChatMessage> conversation = new ArrayList<>();
         for (Message message : currentMessages) {
             if (message.text() == null || message.text().isBlank()
-                    || message.status() == StoredMessage.Status.ERROR) {
+                    || message.status() == StoredMessage.Status.ERROR || message.entryType().equals("QUIZ")
+                    || quizJobs.containsKey(message.id())) {
                 continue;
             }
             MessageRole role = "user".equals(message.role())
@@ -1324,7 +1556,7 @@ public class ChatController {
             for (StoredConversation chat : service.conversations()) {
                 history.add(new Conversation(chat.id(), chat.title(), chat.updatedAt(), chat.messages().stream()
                         .map(message -> new Message(message.id(), message.role(), message.text(), message.attachments(),
-                                message.elapsedMillis(), message.status())).toList(), chat.attachments()));
+                                message.elapsedMillis(), message.status(), message.entryType())).toList(), chat.attachments()));
                 if (!"PENDING".equals(chat.titleState())) {
                     titleRequested.add(chat.id());
                 }
@@ -1353,7 +1585,7 @@ public class ChatController {
     private StoredConversation toStored(Conversation chat) {
         return new StoredConversation(chat.id(), chat.title(), chat.updatedAt(), "PENDING", chat.messages().stream()
                 .map(message -> new StoredMessage(message.id(), message.role(), message.text(), message.attachments(),
-                        message.elapsedMillis(), message.status(), "TEXT")).toList(), chat.attachments());
+                        message.elapsedMillis(), message.status(), message.entryType())).toList(), chat.attachments());
     }
 
     private void requestTitle(String id, String provisional, String firstRequest,
@@ -1412,6 +1644,11 @@ public class ChatController {
         chatHistory.retry().whenComplete((unused, error) -> Platform.runLater(() -> {
             retrySaveButton.setDisable(false);
             if (error == null) {
+                quizJobs.values().stream().filter(job -> job.definition != null).forEach(job -> {
+                    job.ready = true;
+                    job.error = null;
+                    refreshQuizJob(job);
+                });
                 retrySaveButton.setVisible(false);
                 retrySaveButton.setManaged(false);
                 showSaveStatus("Local changes saved.", false);
@@ -1434,7 +1671,7 @@ public class ChatController {
         messagesBox.getChildren().clear();
         for (Message message : currentMessages) {
             if (message.text().isBlank() && message.attachments().isEmpty()
-                    && message.status() == StoredMessage.Status.COMPLETE) {
+                    && message.status() == StoredMessage.Status.COMPLETE && message.entryType().equals("TEXT")) {
                 continue;
             }
             addMessageNode(message);
@@ -1443,6 +1680,9 @@ public class ChatController {
     }
 
     private MessageBubble addMessageNode(Message message) {
+        if (message.entryType().equals("QUIZ") || quizJobs.containsKey(message.id())) {
+            return addQuizNode(message);
+        }
         boolean user = "user".equals(message.role());
         VBox content = new VBox(4);
         content.getStyleClass().add("message-content");
@@ -1671,7 +1911,7 @@ public class ChatController {
     }
 
     private record Message(String id, String role, String text, List<String> attachments,
-                           long elapsedMillis, StoredMessage.Status status) {
+                           long elapsedMillis, StoredMessage.Status status, String entryType) {
 
         private Message {
             Objects.requireNonNull(role, "role");
@@ -1690,8 +1930,13 @@ public class ChatController {
             this(java.util.UUID.randomUUID().toString(), role, text, attachments, elapsedMillis, StoredMessage.Status.COMPLETE);
         }
 
+        private Message(String id, String role, String text, List<String> attachments,
+                        long elapsedMillis, StoredMessage.Status status) {
+            this(id, role, text, attachments, elapsedMillis, status, "TEXT");
+        }
+
         private Message withText(String text, long elapsedMillis, StoredMessage.Status status) {
-            return new Message(id, role, text, attachments, elapsedMillis, status);
+            return new Message(id, role, text, attachments, elapsedMillis, status, entryType);
         }
     }
 

@@ -14,6 +14,7 @@ import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
 import com.puppy.service.ModelService;
+import com.puppy.service.QuizService;
 import com.puppy.util.ThreadManager;
 
 import java.time.Clock;
@@ -40,6 +41,7 @@ public final class ServiceRegistry implements AutoCloseable {
     private final ChatHistoryService chatHistory;
     private final AppSettingsService appSettings;
     private final QuizRepository quizzes;
+    private final QuizService quizService;
 
     private boolean started;
     private boolean closed;
@@ -55,6 +57,7 @@ public final class ServiceRegistry implements AutoCloseable {
             this.modelService = new ModelService(config, new AiSettingsStore(config.dataDirectory(), settings));
             this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
             this.quizzes = new QuizRepository(database);
+            this.quizService = new QuizService(modelService);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
             this.chatService = new ChatService(modelService, documentTextExtractor, appSettings::additionalInstructions);
             this.focusService = new FocusService(
@@ -109,6 +112,7 @@ public final class ServiceRegistry implements AutoCloseable {
     public ChatHistoryService chatHistory() { return chatHistory; }
     public AppSettingsService appSettings() { return appSettings; }
     public QuizRepository quizzes() { return quizzes; }
+    public QuizService quizService() { return quizService; }
 
     /** Releases every service; called from {@code Application.stop()}. */
     @Override

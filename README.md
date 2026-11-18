@@ -7,8 +7,8 @@ services in a single desktop process — no Python, no separate server.
 **Implementation roadmap and status:** [Implementation Status](docs/IMPLEMENTATION_STATUS.md)
 is the single source of truth for scope, decisions, dependencies and acceptance
 criteria. SQLite persistence and **More instructions** in Settings are
-implemented. Interactive **Multiple Quiz** inside Chat remains planned; only the
-quiz-definition storage foundation exists so far.
+implemented. Interactive **Multiple Quiz** is available entirely inside Chat,
+with reusable saved questions and in-memory learning attempts.
 
 **Status: local and cloud AI chat plus Focus planning are wired up.** The app
 launches as a frameless, transparent, always-on-top puppy. The mascot stays in
@@ -17,7 +17,7 @@ Click the puppy for a random message, double-click to open Study / Focus / Chat 
 More. After five idle minutes the puppy falls asleep; click it to wake it up.
 Chat streams Markdown replies from the selected model: **OpenRouter** in the
 cloud when a key is configured, or the local **Ollama** model as a fallback.
-Puppy offers **Focus plan / Model / Help** next to the message box and can read
+Puppy offers **Focus plan / Multiple Quiz / Model / Help** next to the message box and can read
 pinned PDF, Word and text files into the conversation. Settings switches models
 live and stores the OpenRouter key only on this computer. Focus planning reads a
 pinned timetable or subject file, or a typed subject description, infers Quick
@@ -105,13 +105,49 @@ and include examples", then choose **Save instructions**.
   original instructions.
 - These preferences supplement, rather than replace, Puppy's fixed persona and
   document-handling rules. They do not affect Focus extraction, chat titles,
-  future Quiz JSON contracts or the mascot's canned click/wake messages.
+  Quiz JSON contracts or the mascot's canned click/wake messages.
 - Instructions are stored unencrypted with other non-secret SQLite settings and
   sent to the selected model with chat requests. Save failures retain the draft
   and keep the previously saved instructions effective until retry succeeds.
 
 The Settings header remains fixed while its body scrolls, including when the
 cloud API-key section is open.
+
+## Multiple Quiz
+
+In Chat, describe a topic and/or attach documents, select **Multiple Quiz** next
+to the message box, then Send. `/quiz <request>` is the keyboard alternative.
+For example: "Create 6 questions about fractions: 2 Easy, 2 Medium and 2 Hard."
+Omitting the setup uses **5 Medium questions**; each quiz supports **1-20**.
+Controls use English; questions follow the request language.
+
+- Generation uses the selected model: one structured request to read the
+  requested count/difficulties and one to generate the questions. Cloud requests
+  can incur provider charges. There are no automatic generation retries.
+- With attachments, questions must be grounded in supplied text and explanations
+  cite filenames (and page markers where available). Insufficient source
+  material produces an error instead of silently generating fewer questions.
+  Topic-only requests may use the model's knowledge. As with other AI output,
+  check factual accuracy; structural validation cannot prove an answer is true.
+- Each quiz is an independent card in the chat. Select an option and choose
+  **Check answer** to reveal feedback/explanation and lock that question.
+  **Previous/Next** only navigate; they never submit an unchecked selection.
+- On the last question, **Finish** shows the score. Unchecked questions require
+  confirmation and count as skipped with zero points. Results separately show
+  correct, incorrect and skipped totals.
+- **Review** provides read-only question navigation and **Back to results**.
+  **Retry quiz** starts a fresh attempt on the same saved questions without an
+  AI call; confirm before discarding answers. **Back to chat** focuses the composer.
+- Normal chat remains available after generation. Switching conversations keeps
+  each card's attempt in memory. **Restarting Puppy clears all selections,
+  scores, review state and progress**, while saved questions remain reusable.
+- **Cancel**, switching conversations, or closing Chat stops pending generation.
+  A generation error offers manual **Retry generation**. A storage error retains
+  the validated quiz for **Retry save**, without another model request; answering
+  is enabled only after its definition and chat entry save successfully together.
+- Questions/explanations support the existing Markdown renderer; options wrap as
+  plain text. There are no quiz timers, images, new equation renderer, external
+  web research or automatic Focus integration.
 
 ## Local AI setup (Ollama + Qwen3.5 9B)
 
@@ -170,7 +206,7 @@ mvn javafx:run        # launch Puppy
 | Menu (inside a panel) | Return to the Study / Focus / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
-| Chat options | Choose Chat, Focus plan, Model or Help beside the message box |
+| Chat options | Choose Chat, Focus plan, Multiple Quiz, Model or Help beside the message box |
 | Right-click a chat message | Copy it, or reuse it in the message box |
 | Ctrl+V in the message box | Paste copied text |
 | `/model` | Keyboard fallback to show the selected model and provider |
@@ -218,8 +254,8 @@ Use a local disk. Only one running Puppy instance can own a data directory.
   effort, **not a physical-erasure guarantee** on SSDs, filesystem snapshots or
   backups. Protect the data directory and any copies yourself.
 - Focus countdowns are not restored. Quiz storage saves definitions only, never
-  learner attempts, answers, progress or scores; quiz generation/UI is not yet
-  implemented. New history-management/search/export UI is deferred.
+  learner attempts, answers, progress or scores. New history-management/search/
+  export UI is deferred.
 
 ## Mascot states
 
@@ -287,6 +323,8 @@ Infrastructure        SQLite/JDBC repositories, Ollama and OpenRouter HTTP clien
 | `OllamaClient` | Ollama `/api/chat` streaming, JSON mode, availability checks and friendly errors |
 | `OpenRouterClient` | OpenRouter `/chat/completions` SSE streaming, JSON mode, bearer-key header, redacted errors and cloud-friendly messages |
 | `ChatPromptBuilder` | Provider-neutral system prompt, document context and recent-history limits |
+| `QuizService` / `QuizAttempt` | Strict model-backed quiz generation and pure in-memory checking/navigation/scoring |
+| `QuizCard` | Independent inline Chat quiz controls, feedback, results, review and retry |
 | `DocumentTextExtractor` | PDF (PDFBox), DOCX/DOC (Apache POI), TXT and Markdown extraction |
 | `StudyTimer` | Timestamp-based Pomodoro countdown (25:00 focus / 5:00 break, test mode) |
 | `MockChatResponder` | Legacy stand-in used by its unit test; no longer connected to the UI |
@@ -320,14 +358,15 @@ src/main/java/com/puppy/
 ├── model/        ChatMessage, DocumentAttachment, ClassSlot, StudyTask,
 │                 FocusPreferences, FocusSession, FocusPlan, FocusPlannerInput,
 │                 FocusExtraction, FocusState, StoredConversation, StoredMessage,
-│                 QuizDefinition
+│                 QuizDefinition, QuizAttempt
 ├── repository/   SettingsRepository, ChatRepository, FocusRepository, QuizRepository
 ├── service/      ChatService, ChatPromptBuilder, ModelService, FocusService,
 │                 FocusPlanner, FocusPlanExtractor, AiFocusPlanExtractor,
 │                 FocusJsonParser, FocusFormats, MascotStateService,
 │                 DefaultMascotStateService, StudyTimer, MockChatResponder,
-│                 ChatHistoryService, AppSettingsService
-├── ui/           MascotAnimator, MascotSprites, MascotMessages, MarkdownRenderer
+│                 ChatHistoryService, AppSettingsService, QuizService, QuizException
+├── ui/           MascotAnimator, MascotSprites, MascotMessages, MarkdownRenderer,
+│                 QuizCard
 └── util/         ThreadManager
 src/main/resources/
 ├── css/          puppy.css
@@ -337,13 +376,14 @@ src/main/resources/
 src/test/java/com/puppy/
 ├── ai/           OpenRouterClientTest, OllamaClientTest
 ├── config/       AiSettingsStoreTest, DatabaseSettingsTest
-├── controller/   FxmlLayoutTest, FocusControllerWorkerTest
+├── controller/   FxmlLayoutTest, FocusControllerWorkerTest, QuizInteractionTest
 ├── database/     DatabaseTest
 ├── document/     DocumentTextExtractorTest
 ├── service/      ChatPromptBuilderTest, ChatServiceTest, ModelServiceTest,
 │                 FocusPlannerTest, FocusJsonParserTest, FocusServiceTest,
 │                 DefaultMascotStateServiceTest, StudyTimerTest,
-│                 MockChatResponderTest, FocusPersistenceTest
+│                 MockChatResponderTest, FocusPersistenceTest, QuizServiceTest
+├── model/        QuizAttemptTest
 ├── repository/   ChatRepositoryTest, QuizRepositoryTest
 ├── ui/           MascotSpritesTest, MascotMessagesTest
 └── util/         DurationFormatsTest
