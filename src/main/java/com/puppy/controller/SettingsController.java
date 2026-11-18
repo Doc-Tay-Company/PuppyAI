@@ -1,13 +1,17 @@
 package com.puppy.controller;
 
 import com.puppy.ai.AiModel;
+import com.puppy.database.PersistenceException;
+import com.puppy.service.AppSettingsService;
 import com.puppy.service.ModelService;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.TextArea;
 import javafx.scene.layout.VBox;
 
 import java.io.IOException;
@@ -74,6 +78,19 @@ public class SettingsController {
     @FXML
     private Label versionLabel;
 
+    @FXML
+    private VBox instructionsSection;
+    @FXML
+    private TextArea instructionsInput;
+    @FXML
+    private Button saveInstructionsButton;
+    @FXML
+    private Button resetInstructionsButton;
+    @FXML
+    private Label instructionsCounter;
+    @FXML
+    private Label instructionsStatus;
+
     private ModelService modelService;
     private Consumer<Boolean> alwaysOnTopChanged;
     private Runnable closeAction;
@@ -83,11 +100,104 @@ public class SettingsController {
     private boolean refreshingModelChoice;
     private java.util.concurrent.ExecutorService executor;
     private com.puppy.service.AppSettingsService appSettings;
+    private boolean savingInstructions;
+    private String instructionsFeedback = "";
+    private boolean instructionsError;
+
+    @FXML
+    public void initialize() {
+        instructionsSection.setDisable(true);
+        instructionsInput.textProperty().addListener((observable, oldText, text) -> {
+            instructionsFeedback = "";
+            instructionsError = false;
+            refreshInstructions();
+        });
+        refreshInstructions();
+    }
 
     public void attachPersistence(java.util.concurrent.ExecutorService executor,
                                   com.puppy.service.AppSettingsService appSettings) {
         this.executor = executor;
         this.appSettings = appSettings;
+        instructionsInput.setText(appSettings.additionalInstructions());
+        instructionsSection.setDisable(false);
+        refreshInstructions();
+    }
+
+    private void refreshInstructions() {
+        String text = instructionsInput.getText();
+        int count = text.codePointCount(0, text.length());
+        boolean tooLong = count > AppSettingsService.MAX_INSTRUCTION_CHARACTERS;
+        boolean changed = appSettings != null && !text.equals(appSettings.additionalInstructions());
+        instructionsCounter.setText(String.format(java.util.Locale.ROOT, "%,d / 4,000", count));
+        instructionsCounter.getStyleClass().remove("error-copy");
+        if (tooLong) {
+            instructionsCounter.getStyleClass().add("error-copy");
+        }
+        instructionsInput.setDisable(savingInstructions);
+        saveInstructionsButton.setDisable(appSettings == null || executor == null
+                || savingInstructions || tooLong || !changed);
+        resetInstructionsButton.setDisable(savingInstructions || text.isEmpty());
+        instructionsStatus.getStyleClass().remove("error-copy");
+        if (savingInstructions) {
+            instructionsStatus.setText("Saving...");
+        } else if (tooLong) {
+            instructionsStatus.setText("Use no more than 4,000 characters. Your text has not been truncated.");
+            instructionsStatus.getStyleClass().add("error-copy");
+        } else if (!instructionsFeedback.isEmpty()) {
+            instructionsStatus.setText(instructionsFeedback);
+            if (instructionsError) {
+                instructionsStatus.getStyleClass().add("error-copy");
+            }
+        } else {
+            instructionsStatus.setText(changed ? "Unsaved changes"
+                    : text.isBlank() ? "Using default instructions." : "Saved");
+        }
+    }
+
+    @FXML
+    private void onSaveInstructions() {
+        if (savingInstructions) {
+            return;
+        }
+        String draft = instructionsInput.getText();
+        try {
+            AppSettingsService.validateAdditionalInstructions(draft);
+        } catch (IllegalArgumentException e) {
+            refreshInstructions();
+            return;
+        }
+        if (appSettings == null || executor == null) {
+            finishInstructionsSave("Settings are not available yet. Please reopen Settings.", true);
+            return;
+        }
+        savingInstructions = true;
+        refreshInstructions();
+        try {
+            executor.submit(() -> {
+                try {
+                    appSettings.setAdditionalInstructions(draft);
+                    Platform.runLater(() -> finishInstructionsSave("Saved", false));
+                } catch (PersistenceException e) {
+                    Platform.runLater(() -> finishInstructionsSave(
+                            "Instructions were not saved. Your draft is retained; check storage access and retry.", true));
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            finishInstructionsSave("The application is shutting down. Instructions were not saved.", true);
+        }
+    }
+
+    private void finishInstructionsSave(String message, boolean error) {
+        savingInstructions = false;
+        instructionsFeedback = message;
+        instructionsError = error;
+        refreshInstructions();
+    }
+
+    @FXML
+    private void onResetInstructions() {
+        instructionsInput.clear();
     }
 
     @FunctionalInterface

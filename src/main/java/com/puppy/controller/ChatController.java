@@ -326,6 +326,7 @@ public class ChatController {
         streamTicker.playFromStart();
         List<ChatMessage> conversation = conversationForModel();
         List<DocumentAttachment> requestAttachments = List.copyOf(attachments);
+        ChatService.Request request = chatService.prepareReply(conversation, requestAttachments);
         long startedAtNanos = System.nanoTime();
 
         try {
@@ -334,7 +335,7 @@ public class ChatController {
                         try {
                             savedRequest.join();
                             if (generation == responseGeneration && !Thread.currentThread().isInterrupted()) {
-                                streamReply(generation, conversation, requestAttachments, startedAtNanos);
+                                streamReply(generation, request, startedAtNanos);
                             }
                         } catch (java.util.concurrent.CompletionException e) {
                             Platform.runLater(() -> failReply(generation,
@@ -754,10 +755,9 @@ public class ChatController {
         return reply.toString();
     }
 
-    private void streamReply(int generation, List<ChatMessage> conversation,
-                             List<DocumentAttachment> documents, long startedAtNanos) {
+    private void streamReply(int generation, ChatService.Request request, long startedAtNanos) {
         try {
-            String reply = chatService.reply(conversation, documents,
+            String reply = chatService.reply(request,
                     token -> enqueueToken(generation, token));
             long elapsedMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
             Platform.runLater(() -> completeReply(generation, reply, elapsedMillis));

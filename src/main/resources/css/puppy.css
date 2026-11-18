@@ -126,6 +126,18 @@
     -fx-padding: 7 9;
 }
 
+.settings-scroll,
+.settings-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.instructions-editor .content {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 8;
+}
+
 .muted-copy {
     -fx-font-size: 12px;
     -fx-text-fill: #8a7263;

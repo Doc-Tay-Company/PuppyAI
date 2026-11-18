@@ -22,6 +22,8 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -309,20 +311,23 @@ class FxmlLayoutTest {
                 assertTrue(settingsStage.getScene().lookup("#openRouterKeyField")
                                 instanceof PasswordField,
                         "The OpenRouter key field must be masked");
-                Label settingsVersion = (Label) settingsStage.getScene().lookup("#versionLabel");
-                settingsVersion.getScene().getRoot().applyCss();
-                settingsVersion.getScene().getRoot().layout();
-                Bounds settingsVersionBounds =
-                        settingsVersion.localToScene(settingsVersion.getBoundsInLocal());
-                assertTrue(settingsVersionBounds.getMaxY()
-                                <= settingsStage.getScene().getHeight() + 1,
-                        "Settings content should fit inside the window without clipping");
+                assertMoreInstructionsWork(settingsStage, services);
                 alwaysOnTop.fire();
                 awaitFx(() -> !stage.isAlwaysOnTop());
                 assertFalse(stage.isAlwaysOnTop(),
                         "The in-session always-on-top setting should update the mascot stage");
                 assertFalse(settingsStage.isAlwaysOnTop(),
                         "Panel stages should stay behind the mascot when always-on-top is disabled");
+                closeActivePanel(settingsStage, 1);
+
+                Event.fireEvent(mascotDock, doubleClick());
+                menuStage = findShowingStage(".main-menu");
+                ((Button) ((HBox) menuStage.getScene().lookup(".main-menu")).getChildren().get(3)).fire();
+                ((Button) ((VBox) menuStage.getScene().lookup(".more-menu")).getChildren().get(2)).fire();
+                settingsStage = findShowingStage("#alwaysOnTopCheck");
+                assertEquals("Keep this unsaved draft", ((TextArea) settingsStage.getScene()
+                        .lookup("#instructionsInput")).getText(), "Reopening Settings must retain the draft");
+                assertEquals("", services.appSettings().additionalInstructions(), "A retained draft must not be applied");
                 closeActivePanel(settingsStage, 1);
 
                 // The key section follows the selected model. Use an isolated
@@ -338,6 +343,8 @@ class FxmlLayoutTest {
                         new AiSettingsStore(tempDirectory));
                 isolatedController.attach("test", isolatedModels, true,
                         value -> { }, () -> { }, () -> { }, () -> { }, () -> { });
+                new Scene(isolatedSettings);
+                isolatedSettings.applyCss();
                 VBox keySection = (VBox) isolatedSettings.lookup("#openRouterKeySection");
                 assertFalse(keySection.isVisible(),
                         "The OpenRouter key section should be hidden for the local model");
@@ -427,6 +434,93 @@ class FxmlLayoutTest {
         }
         assertNull(failure.get(), "An FXML layout could not be loaded");
         Platform.exit();
+    }
+
+    private static void assertMoreInstructionsWork(Stage settingsStage, ServiceRegistry services) {
+        Parent root = settingsStage.getScene().getRoot();
+        TextArea input = (TextArea) root.lookup("#instructionsInput");
+        Button save = (Button) root.lookup("#saveInstructionsButton");
+        Button reset = (Button) root.lookup("#resetInstructionsButton");
+        Label status = (Label) root.lookup("#instructionsStatus");
+        Label counter = (Label) root.lookup("#instructionsCounter");
+        VBox body = (VBox) root.lookup("#settingsBody");
+        assertEquals("More instructions", ((Label) ((VBox) body.getChildren().get(3)).getChildren().getFirst()).getText());
+        assertEquals(5, input.getPrefRowCount());
+        assertTrue(input.isWrapText());
+        assertTrue(save.isDisabled());
+        String saved = "Use simple explanations.\nInclude examples.";
+        input.setText(saved);
+        assertEquals("Unsaved changes", status.getText());
+        assertEquals("", services.appSettings().additionalInstructions());
+        save.fire();
+        assertEquals("Saving...", status.getText());
+        assertTrue(save.isDisabled());
+        awaitFx(() -> !input.isDisabled());
+        assertEquals("Saved", status.getText());
+        assertEquals(saved, services.appSettings().additionalInstructions());
+        reset.fire();
+        assertEquals("", input.getText());
+        assertEquals(saved, services.appSettings().additionalInstructions(), "Reset must only clear the draft");
+        assertEquals("Unsaved changes", status.getText());
+        save.fire();
+        awaitFx(() -> !input.isDisabled());
+        assertEquals("", services.appSettings().additionalInstructions());
+        input.setText("\uD83D\uDC36".repeat(4_000));
+        assertEquals("4,000 / 4,000", counter.getText());
+        assertFalse(save.isDisabled());
+        input.setText("x".repeat(4_001));
+        assertEquals(4_001, input.getText().length(), "Pasted text must not be silently truncated");
+        assertTrue(save.isDisabled());
+        assertTrue(status.getStyleClass().contains("error-copy"));
+        input.setText("Retain this failed-save draft");
+        executeSqlOffFx(services, "CREATE TRIGGER fail_instructions BEFORE UPDATE ON settings WHEN NEW.key='additionalInstructions' BEGIN SELECT RAISE(ABORT,'injected'); END");
+        save.fire();
+        awaitFx(() -> !input.isDisabled());
+        assertTrue(status.getStyleClass().contains("error-copy"));
+        assertEquals("Retain this failed-save draft", input.getText());
+        assertEquals("", services.appSettings().additionalInstructions());
+        assertFalse(save.isDisabled(), "Failed saves must remain retryable");
+        executeSqlOffFx(services, "DROP TRIGGER fail_instructions");
+
+        @SuppressWarnings("unchecked")
+        ComboBox<AiModel> models = (ComboBox<AiModel>) root.lookup("#modelChoice");
+        AiModel originalModel = models.getValue();
+        models.setValue(models.getItems().stream().filter(AiModel::cloud).findFirst().orElseThrow());
+        awaitFx(() -> root.lookup("#openRouterKeySection").isVisible());
+        assertTrue(root.lookup("#instructionsSection").isVisible());
+        settingsStage.setHeight(480);
+        root.applyCss();
+        root.layout();
+        Node header = root.lookup(".panel-header");
+        Bounds headerBefore = header.localToScene(header.getBoundsInLocal());
+        ScrollPane scroll = (ScrollPane) root.lookup("#settingsScroll");
+        scroll.setVvalue(1);
+        root.layout();
+        Bounds headerAfter = header.localToScene(header.getBoundsInLocal());
+        assertEquals(headerBefore, headerAfter, "The Settings header must stay fixed when content scrolls");
+        Node viewport = scroll.lookup(".viewport");
+        Bounds viewportBounds = viewport.localToScene(viewport.getBoundsInLocal());
+        Node version = root.lookup("#versionLabel");
+        Bounds versionBounds = version.localToScene(version.getBoundsInLocal());
+        assertTrue(versionBounds.getMaxY() <= viewportBounds.getMaxY() + 1,
+                "The bottom Settings content must be reachable at small heights with the cloud section open");
+        models.setValue(originalModel);
+        awaitFx(() -> !root.lookup("#openRouterKeySection").isVisible());
+        input.setText("Keep this unsaved draft");
+    }
+
+    private static void executeSqlOffFx(ServiceRegistry services, String sql) {
+        var future = java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:"
+                    + services.config().dataDirectory().resolve("puppy.db"));
+                 var statement = connection.createStatement()) {
+                statement.execute(sql);
+            } catch (java.sql.SQLException e) {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        });
+        awaitFx(future::isDone);
+        future.join();
     }
 
     private static void assertHistoryChangesOrderOnlyForNewMessages(Stage chatStage, ServiceRegistry services) {

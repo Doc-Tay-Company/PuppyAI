@@ -111,4 +111,41 @@ class DatabaseSettingsTest {
             }
         }
     }
+
+    @Test
+    void instructionDraftsPersistOnlyAfterSuccessfulBoundedSaves() {
+        AppConfig config = new AppConfig("Puppy", "test", true, directory,
+                AppConfig.DEFAULT_OLLAMA_URL, AppConfig.DEFAULT_OLLAMA_MODEL,
+                null, AppConfig.DEFAULT_OPENROUTER_BASE_URL);
+        String instructions = "Use clear examples.\nPrefer short paragraphs.";
+        try (Database database = Database.open(directory)) {
+            var service = new AppSettingsService(config, new SettingsRepository(database));
+            service.setAdditionalInstructions(instructions);
+        }
+        try (Database database = Database.open(directory)) {
+            var service = new AppSettingsService(config, new SettingsRepository(database));
+            assertEquals(instructions, service.additionalInstructions());
+            String limit = "\uD83D\uDC36".repeat(4_000);
+            service.setAdditionalInstructions(limit);
+            assertThrows(IllegalArgumentException.class, () -> service.setAdditionalInstructions(limit + "x"));
+            assertEquals(limit, service.additionalInstructions());
+            database.call(connection -> {
+                try (var sql = connection.createStatement()) {
+                    sql.execute("CREATE TRIGGER fail_instructions BEFORE UPDATE ON settings WHEN NEW.key='additionalInstructions' BEGIN SELECT RAISE(ABORT,'injected'); END");
+                }
+                return null;
+            });
+            assertThrows(PersistenceException.class, () -> service.setAdditionalInstructions("Unsaved draft"));
+            assertEquals(limit, service.additionalInstructions());
+            assertEquals(limit, new AppSettingsService(config, new SettingsRepository(database)).additionalInstructions());
+            database.call(connection -> {
+                try (var sql = connection.createStatement()) { sql.execute("DROP TRIGGER fail_instructions"); }
+                return null;
+            });
+            service.setAdditionalInstructions("");
+        }
+        try (Database database = Database.open(directory)) {
+            assertEquals("", new AppSettingsService(config, new SettingsRepository(database)).additionalInstructions());
+        }
+    }
 }

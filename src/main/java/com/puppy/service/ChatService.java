@@ -24,17 +24,39 @@ public final class ChatService {
 
     private final ModelService modelService;
     private final DocumentTextExtractor documentTextExtractor;
+    private final java.util.function.Supplier<String> additionalInstructions;
 
     public ChatService(ModelService modelService, DocumentTextExtractor documentTextExtractor) {
+        this(modelService, documentTextExtractor, () -> "");
+    }
+
+    public ChatService(ModelService modelService, DocumentTextExtractor documentTextExtractor,
+                       java.util.function.Supplier<String> additionalInstructions) {
         this.modelService = Objects.requireNonNull(modelService, "modelService");
         this.documentTextExtractor = Objects.requireNonNull(documentTextExtractor, "documentTextExtractor");
+        this.additionalInstructions = Objects.requireNonNull(additionalInstructions, "additionalInstructions");
+    }
+
+    public record Request(List<ChatMessage> messages) {
+        public Request {
+            messages = List.copyOf(messages);
+        }
+    }
+
+    /** Captures saved preferences before a request can wait on background work. */
+    public Request prepareReply(List<ChatMessage> conversation, List<DocumentAttachment> attachments) {
+        return new Request(ChatPromptBuilder.build(conversation, attachments, additionalInstructions.get()));
+    }
+
+    public String reply(Request request, Consumer<String> onToken) throws AiException {
+        Objects.requireNonNull(onToken, "onToken");
+        return modelService.streamChat(request.messages(), onToken);
     }
 
     /** Streams a reply using the recent conversation and any attached documents. */
     public String reply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
                         Consumer<String> onToken) throws AiException {
-        Objects.requireNonNull(onToken, "onToken");
-        return modelService.streamChat(ChatPromptBuilder.build(conversation, attachments), onToken);
+        return reply(prepareReply(conversation, attachments), onToken);
     }
 
     /** Extracts readable text from a local file. Safe to call from a worker thread. */

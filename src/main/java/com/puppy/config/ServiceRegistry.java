@@ -56,7 +56,7 @@ public final class ServiceRegistry implements AutoCloseable {
             this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
             this.quizzes = new QuizRepository(database);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
-            this.chatService = new ChatService(modelService, documentTextExtractor);
+            this.chatService = new ChatService(modelService, documentTextExtractor, appSettings::additionalInstructions);
             this.focusService = new FocusService(
                     new AiFocusPlanExtractor(modelService, Clock.systemDefaultZone()),
                     documentTextExtractor, new FocusRepository(database));

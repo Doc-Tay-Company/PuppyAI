@@ -6,8 +6,8 @@ services in a single desktop process — no Python, no separate server.
 
 **Implementation roadmap and status:** [Implementation Status](docs/IMPLEMENTATION_STATUS.md)
 is the single source of truth for scope, decisions, dependencies and acceptance
-criteria. SQLite persistence is implemented. Supplemental chat instructions in
-Settings and interactive **Multiple Quiz** inside Chat remain planned; only the
+criteria. SQLite persistence and **More instructions** in Settings are
+implemented. Interactive **Multiple Quiz** inside Chat remains planned; only the
 quiz-definition storage foundation exists so far.
 
 **Status: local and cloud AI chat plus Focus planning are wired up.** The app
@@ -87,6 +87,31 @@ the model provider it routes to along with the conversation. The local model
 keeps that text on this computer. Cloud requests go to
 `https://openrouter.ai/api/v1` unless `PUPPY_OPENROUTER_URL` or
 `-Dpuppy.openrouter.url` overrides it.
+
+## More instructions
+
+Open **More > Settings** and scroll to **More instructions**, between Local model
+and Desktop. Enter communication preferences such as "Use simple explanations
+and include examples", then choose **Save instructions**.
+
+- The multiline editor has a live **4,000-character** limit (Unicode code points).
+  Oversized text stays visible but cannot be saved; it is never silently cut off.
+- **Reset to default** clears only the draft. Choose **Save instructions** to
+  remove the saved preferences and return to Puppy's built-in behavior.
+- Unsaved changes stay in the editor while Puppy runs, including when Settings
+  closes and reopens. Only saved preferences survive an app restart.
+- Preferences apply to subsequent chat requests in every conversation, with both
+  local and cloud models. An already submitted or streaming request retains its
+  original instructions.
+- These preferences supplement, rather than replace, Puppy's fixed persona and
+  document-handling rules. They do not affect Focus extraction, chat titles,
+  future Quiz JSON contracts or the mascot's canned click/wake messages.
+- Instructions are stored unencrypted with other non-secret SQLite settings and
+  sent to the selected model with chat requests. Save failures retain the draft
+  and keep the previously saved instructions effective until retry succeeds.
+
+The Settings header remains fixed while its body scrolls, including when the
+cloud API-key section is open.
 
 ## Local AI setup (Ollama + Qwen3.5 9B)
 
@@ -246,7 +271,7 @@ Infrastructure        SQLite/JDBC repositories, Ollama and OpenRouter HTTP clien
 | `AppConfig` | App name, version, always-on-top flag, data directory, Ollama URL/model, optional OpenRouter environment key and endpoint |
 | `AiSettingsStore` | SQLite-backed model choice with one-time legacy import; separate local OpenRouter secret file |
 | `Database` / repositories | Locked per-user SQLite database, serialized JDBC work, transactional storage and schema upgrades |
-| `ChatHistoryService` / `AppSettingsService` | Durable chat snapshots/retry and committed desktop preferences |
+| `ChatHistoryService` / `AppSettingsService` | Durable chat snapshots/retry and committed desktop/chat-instruction preferences |
 | `MascotController` | Fixed mascot window, separate menu/panel windows, mascot interactions and timers |
 | `MascotAnimator` | Frame timing and per-state image switching |
 | `MascotSprites` | Ordered frame resources and per-state animation metadata |
@@ -509,8 +534,8 @@ read it yet.
 
 Known limitations: JavaFX receives mouse input across the full window rectangle,
 including transparent pixels. Chat history, extracted attachments, Focus plans,
-model choice and always-on-top persist locally. A system tray, custom instructions
-editor and true hide/show behavior are future work.
+model choice, always-on-top and additional chat instructions persist locally.
+A system tray and true hide/show behavior are future work.
 Focus extraction uses the selected model, so cloud extraction needs a working
 key and internet connection while local extraction needs Ollama running. Combined
 document context is capped at 24,000 characters, and the planner defaults to a

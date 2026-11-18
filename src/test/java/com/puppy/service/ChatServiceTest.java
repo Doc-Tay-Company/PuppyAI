@@ -62,12 +62,59 @@ class ChatServiceTest {
                     "http://127.0.0.1:" + server.getAddress().getPort(), AppConfig.DEFAULT_OLLAMA_MODEL,
                     null, AppConfig.DEFAULT_OPENROUTER_BASE_URL);
             var service = new ChatService(new ModelService(config, new AiSettingsStore(tempDirectory)),
-                    new DocumentTextExtractor());
+                    new DocumentTextExtractor(), () -> "This preference must not reach title generation.");
             assertEquals("Review algebra basics", service.conversationTitle("Help me understand algebra"));
             assertTrue(request.get().contains("Help me understand algebra"));
+            assertFalse(request.get().contains("This preference must not reach title generation."));
             assertTrue(request.get().contains("\"format\":\"json\""));
             reply.set("{\"title\":\"" + "x".repeat(81) + "\"}");
             assertThrows(com.puppy.ai.AiException.class, () -> service.conversationTitle("test"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void capturesSavedInstructionsForEachRequestAcrossLocalAndCloudProviders() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new java.util.concurrent.CopyOnWriteArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        server.createContext("/", exchange -> {
+            requests.add(json.readTree(exchange.getRequestBody()));
+            boolean local = exchange.getRequestURI().getPath().equals("/api/chat");
+            String response = local ? "{\"message\":{\"content\":\"Hello\"},\"done\":true}\n"
+                    : "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n";
+            exchange.getResponseHeaders().set("Content-Type", local ? "application/x-ndjson" : "text/event-stream");
+            byte[] bytes = response.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort();
+            AppConfig config = new AppConfig("Puppy", "test", true, tempDirectory, url,
+                    AppConfig.DEFAULT_OLLAMA_MODEL, "test-only-openrouter-key-1234567890", url);
+            var models = new ModelService(config, new AiSettingsStore(tempDirectory));
+            var preferences = new java.util.concurrent.atomic.AtomicReference<>("First saved preference");
+            var service = new ChatService(models, new DocumentTextExtractor(), preferences::get);
+            var conversation = java.util.List.of(com.puppy.model.ChatMessage.user("Explain this."));
+            var prepared = service.prepareReply(conversation, java.util.List.of());
+            preferences.set("Updated saved preference");
+            models.selectModel(com.puppy.ai.AiModels.localModelId(AppConfig.DEFAULT_OLLAMA_MODEL));
+            assertEquals("Hello", service.reply(prepared, token -> { }));
+            assertTrue(requests.get(0).path("messages").get(0).path("content").asText().contains("First saved preference"));
+            assertFalse(requests.get(0).toString().contains("Updated saved preference"));
+
+            service.reply(conversation, java.util.List.of(), token -> { });
+            models.selectModel(com.puppy.ai.AiModels.OPENROUTER_GEMINI_FLASH);
+            service.reply(conversation, java.util.List.of(), token -> { });
+            assertEquals(requests.get(1).path("messages"), requests.get(2).path("messages"),
+                    "Both providers must receive the same saved instructions and fixed persona");
+            assertTrue(requests.get(2).toString().contains("Updated saved preference"));
+            preferences.set("");
+            service.reply(conversation, java.util.List.of(), token -> { });
+            assertEquals(ChatPromptBuilder.SYSTEM_PROMPT,
+                    requests.get(3).path("messages").get(0).path("content").asText());
         } finally {
             server.stop(0);
         }

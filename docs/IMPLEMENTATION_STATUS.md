@@ -13,8 +13,8 @@ features already exist.
 
 Current goal: local SQLite persistence, editable supplemental chat instructions
 in Settings, and interactive multiple-choice quizzes entirely inside Chat.
-Database delivery is implemented and verified. Supplemental instructions and the
-interactive quiz feature remain pending; quiz definition storage is ready.
+Database delivery and supplemental chat instructions are implemented and
+verified. The interactive quiz feature remains pending; definition storage is ready.
 
 ### Database delivery plan (approved 2026-11-18)
 
@@ -99,28 +99,62 @@ actual results and a concrete remaining-feature plan. No separate plan file.
   have not been smoke-tested.** Native-access/unnamed-JavaFX warnings and the
   pre-existing PDFBox/POI logging-provider warning remain non-failing.
 
+### More instructions delivery outcome (2026-11-18)
+
+- PROMPT-1 is implemented end-to-end. The existing backend had generic SQLite
+  settings but no instruction preference or prompt integration. The new
+  `additionalInstructions` setting uses that existing schema (no migration).
+- `AppSettingsService` loads/caches the saved text and publishes updates only
+  after commit. The limit is 4,000 Unicode code points, shared by validation,
+  the live UI counter and prompt composition. Blank preferences preserve the
+  original outgoing prompt exactly; no input is silently truncated.
+- Settings has a **More instructions** section between Local model and Desktop:
+  five-line wrapping editor, example/precedence/privacy hints, Save instructions,
+  Reset to default and section-local unsaved/saving/saved/error feedback.
+  Reset changes only the draft until Save. Drafts survive panel navigation but
+  not app restart. Failed saves retain the draft and the previous effective value.
+- The header stays fixed above a scrolling body. JavaFX tests exercise a
+  480-pixel-high window with the cloud key section visible and verify that the
+  bottom content is reachable and navigation retains the unsaved editor draft.
+- `ChatService.prepareReply` captures immutable outbound messages when Chat
+  submits a request, before background/save queues can delay generation. The
+  fixed persona remains first; delimited/escaped lower-priority preferences
+  follow, without replacing document rules or adding extra system messages.
+  Existing and new conversations share saved preferences. Title generation,
+  Focus JSON extraction and canned mascot messages are unchanged.
+- Verification: **`mvn -q test` - 130 tests, 0 failures, 0 errors, 0 skipped**.
+  Covers preference restart/reset, exact Unicode boundaries, injected save
+  failures, UI status/draft/reset flow, scroll/header behavior, local/cloud HTTP
+  payload parity, queued-request snapshots and exclusion from title prompts.
+  Live-provider model adherence and manual visual review remain unverified;
+  prompt precedence is expressed by the application, not a guarantee of model
+  behavior. Existing non-failing JavaFX/native-access/logging warnings remain.
+
 ### Concrete next implementation plan
 
-1. **PROMPT-1 - supplemental instructions:** add a bounded non-secret setting
-   and cached service accessor; add a multiline Settings editor with Save/Reset;
-   compose delimited preferences below the fixed persona without changing Focus
-   or Quiz contracts. Verify persistence, failed-save behavior, exact outbound
-   prompt shape and next-request-only changes; test small-screen Settings fit.
-2. **QUIZ-1 - generation and learning logic:** use existing `QuizDefinition` and
+PROMPT-1 UI decisions (2026-11-18): **More instructions** sits between Local
+model and Desktop. Settings has a fixed header and scrollable body. Use a
+five-line wrapping editor, example placeholder and precedence hint; explicit
+Save with section-local status; Reset clears the draft and requires Save.
+Retain unsaved drafts while the app runs, without leave dialogs. Enforce a
+4,000-character limit with a live counter and no silent truncation or enable
+switch. Saved preferences apply to subsequent chat requests only.
+
+1. **QUIZ-1 - generation and learning logic:** use existing `QuizDefinition` and
    `ModelService.jsonChat`; extract count/difficulty requests (5/Medium defaults,
    1-20 questions, mixed per-question difficulty), validate the complete result,
    and implement deterministic in-memory checking/navigation/scoring/retry.
    Test malformed output, wrong counts/options, mixed difficulty and no AI calls
    for grading or retry. No attempt/score fields may enter persisted history.
-3. **QUIZ-2 remaining integration:** atomically attach a definition to an ordered
+2. **QUIZ-2 remaining integration:** atomically attach a definition to an ordered
    QUIZ chat entry; connect repository reads to typed history restoration.
    Preserve entry types when UI snapshots are rebuilt. Reopening after process
    restart must create an entirely unanswered attempt from the saved definition.
-4. **QUIZ-3 - Chat-only interaction:** add Multiple Quiz to the composer and
+3. **QUIZ-3 - Chat-only interaction:** add Multiple Quiz to the composer and
    original Puppy-styled cards, one question at a time, Previous/Next, Check
    answer, locked feedback, final score/review and Retry. Keep normal Chat usable;
    isolate attempts/cancellation callbacks by chat and quiz ID.
-5. **VERIFY-1 - release gate:** run focused tests then the full suite, manually
+4. **VERIFY-1 - release gate:** run focused tests then the full suite, manually
    verify local/cloud generation, failure/quit/restart flows and screen fit,
    update README for newly shipped behavior and close ledger items only with
    recorded evidence. Retest that quiz selections/scores never reach SQLite.
@@ -234,7 +268,7 @@ have passed; record the actual validation command/result when closing an item.
 | DB-2 | Non-secret settings repository/service, one-time legacy model-choice migration, persistent desktop preferences; retain secret file | DB-1 | Complete - atomic migration/rollback and preference tests passed |
 | DB-3 | Durable history models/repository/service; save active/archived chats, message timing and extracted attachments; restore history | DB-1 | Complete - reopen/retry/UI history tests passed |
 | DB-4 | Focus repositories, transactional mutations and full state restoration; adapt controller worker/UI handoff | DB-1 | Complete - persistence/rollback/worker tests passed |
-| PROMPT-1 | Supplemental instructions service integration, Settings editor with Save/Reset, bounded composition and request snapshots | DB-2 | Not started |
+| PROMPT-1 | Supplemental instructions service integration, Settings editor with Save/Reset, bounded composition and request snapshots | DB-2 | Complete - 130-test suite passed; live-provider adherence/manual visual review pending |
 | QUIZ-1 | Quiz models, structured request extraction/generation/parser, per-question difficulty and deterministic in-memory attempt logic | None | Not started |
 | QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | In progress - definition schema/repository complete; runtime entry/card integration awaits quiz feature |
 | QUIZ-3 | Multiple Quiz composer mode and Puppy-styled interactive Chat cards, navigation/feedback/score/review/retry | QUIZ-2 | Not started |
@@ -333,7 +367,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage delivery and automated checks above; interactive quizzes remain milestone 6 |
 | 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
-| 6 | Study mode, settings, integration | Partial: Pomodoro/settings exist; supplemental instructions and Chat quizzes not started (PROMPT-1, QUIZ-1 through QUIZ-3) |
+| 6 | Study mode, settings, integration | Partial: Pomodoro/settings and supplemental instructions complete; Chat quizzes pending (QUIZ-1 through QUIZ-3) |
 | 7 | Testing, optimization, packaging | Pending |
 
 ## Completed (milestone 1)
@@ -582,7 +616,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | `AiSettingsStore` | Persists model choice through SQLite, imports legacy selection once and keeps the OpenRouter key in its separate secret file; never used by controllers directly. |
 | `Database` / repositories | Serialized JDBC transactions, schema lifecycle and durable chat/Focus/settings/quiz-definition storage. |
 | `ChatHistoryService` | Owns durable chat snapshots, active-chat state, title updates, queued writes and failed-save retry. |
-| `AppSettingsService` | Cached always-on-top preference; changes publish after a successful SQLite commit. |
+| `AppSettingsService` | Cached always-on-top and additional-instructions preferences; changes publish after a successful SQLite commit. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
 | `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
 | `MockChatResponder` | Legacy stand-in retained for its unit test; it is no longer connected to the UI. |
@@ -605,6 +639,8 @@ progress or scores is intentionally excluded, not a missing persistence task.
   body.
 - **Prompt:** Puppy's rules and optional document context are merged into one
   system message, which both providers accept as a normal system message.
+  Saved additional instructions are delimited lower-priority preferences;
+  each submitted chat request captures its own immutable prompt snapshot.
   `ChatPromptBuilder` keeps at most ten turns, 8,000 characters of history and
   20,000 characters of document text; the local model runs with a
   16,384-token context window.
@@ -650,8 +686,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
   cannot guarantee physical erasure from SSDs, filesystem snapshots or backups.
 - History is loaded into memory at startup; pagination/search/retention controls
   are deferred. Large long-lived histories may require future paging work.
-- Supplemental instructions and Multiple Quiz mode are not implemented; see
-  PROMPT-1 and QUIZ-1 through QUIZ-3 above.
+- Multiple Quiz generation/UI is not implemented; see QUIZ-1 through QUIZ-3 above.
 - Regenerating a Focus plan replaces the scheduled session list, so hand-made
   sessions are lost unless they are recreated. Manual and generated sessions are
   not yet linked to source tasks.

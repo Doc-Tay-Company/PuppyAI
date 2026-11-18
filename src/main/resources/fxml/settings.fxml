@@ -1,85 +1,83 @@
-<?xml version="1.0" encoding="UTF-8"?>
-
+<?xml version="1.0" encoding="utf-8"?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.PasswordField?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.TextArea?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.VBox?>
-
-<VBox xmlns="http://javafx.com/javafx/24" xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.puppy.controller.SettingsController"
-      styleClass="panel-card" spacing="10" minWidth="0" minHeight="0">
+<VBox xmlns="http://javafx.com/javafx/24" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.puppy.controller.SettingsController" styleClass="panel-card" spacing="10" minWidth="0" minHeight="0">
     <HBox styleClass="panel-header" alignment="CENTER_LEFT" spacing="8">
-        <Label text="Settings" styleClass="panel-title"/>
-        <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
-        <Button text="_" onAction="#onMinimize" styleClass="window-button"/>
-        <Button text="X" onAction="#onClose" styleClass="window-button"/>
+        <Label text="Settings" styleClass="panel-title" />
+        <Region HBox.hgrow="ALWAYS" />
+        <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button" />
+        <Button text="_" onAction="#onMinimize" styleClass="window-button" />
+        <Button text="X" onAction="#onClose" styleClass="window-button" />
     </HBox>
-
-    <VBox styleClass="settings-section" spacing="6">
-        <HBox alignment="CENTER_LEFT" spacing="8">
-            <Label text="AI model" styleClass="section-title"/>
-            <Region HBox.hgrow="ALWAYS"/>
-            <Label fx:id="modelLocationPill" text="Local" styleClass="status-pill"/>
-        </HBox>
-        <ComboBox fx:id="modelChoice" maxWidth="Infinity" styleClass="settings-field"
-                  onAction="#onModelChanged"/>
-        <Label fx:id="modelDetailLabel" text="Model" styleClass="muted-copy" wrapText="true"/>
-        <Label fx:id="modelHintLabel" text="Choose the model Puppy should use."
-               styleClass="muted-copy" wrapText="true"/>
-        <Label fx:id="aiStatusLabel" text="" styleClass="muted-copy"
-               wrapText="true" managed="false" visible="false"/>
-    </VBox>
-
-    <VBox fx:id="openRouterKeySection" styleClass="settings-section" spacing="6"
-          managed="false" visible="false">
-        <HBox alignment="CENTER_LEFT" spacing="8">
-            <Label text="OpenRouter API key" styleClass="section-title"/>
-            <Region HBox.hgrow="ALWAYS"/>
-            <Label fx:id="openRouterKeyPill" text="Not configured" styleClass="status-pill"/>
-        </HBox>
-        <Label fx:id="openRouterKeyStatus" text="OpenRouter API key: not configured."
-               styleClass="muted-copy" wrapText="true"/>
-        <PasswordField fx:id="openRouterKeyField" promptText="Paste your OpenRouter API key"
-                       maxWidth="Infinity" styleClass="settings-field"
-                       onAction="#onSaveOpenRouterKey"/>
-        <HBox alignment="CENTER_LEFT" spacing="8">
-            <Button fx:id="saveOpenRouterKeyButton" text="Save key"
-                    onAction="#onSaveOpenRouterKey" styleClass="quiet-button"/>
-            <Button fx:id="removeOpenRouterKeyButton" text="Remove key"
-                    onAction="#onRemoveOpenRouterKey" styleClass="quiet-button"/>
-        </HBox>
-        <Label fx:id="openRouterKeyHint"
-               text="The key is stored only on this computer in Puppy's local data folder, never in the project."
-               styleClass="muted-copy" wrapText="true"/>
-    </VBox>
-
-    <VBox styleClass="settings-section" spacing="6">
-        <HBox alignment="CENTER_LEFT" spacing="8">
-            <Label text="Local model" styleClass="section-title"/>
-            <Region HBox.hgrow="ALWAYS"/>
-            <Label text="Ollama" styleClass="status-pill"/>
-        </HBox>
-        <Label fx:id="localModelLabel" text="Model" styleClass="muted-copy" wrapText="true"/>
-        <Label fx:id="ollamaUrlLabel" text="Server" styleClass="muted-copy" wrapText="true"/>
-        <Label text="The local model needs no API key and keeps chat on this computer."
-               styleClass="muted-copy" wrapText="true"/>
-    </VBox>
-
-    <VBox styleClass="settings-section" spacing="6">
-        <Label text="Desktop" styleClass="section-title"/>
-        <CheckBox fx:id="alwaysOnTopCheck" text="Keep Puppy above other windows"
-                  onAction="#onAlwaysOnTopChanged"/>
-        <Label text="You can collapse panels to return to the desktop mascot."
-               styleClass="muted-copy" wrapText="true"/>
-    </VBox>
-
-    <VBox styleClass="settings-section" spacing="6">
-        <Label text="About Puppy AI" styleClass="section-title"/>
-        <Label fx:id="versionLabel" text="Version" styleClass="muted-copy"/>
-    </VBox>
+    <ScrollPane fx:id="settingsScroll" fitToWidth="true" hbarPolicy="NEVER" minHeight="0" VBox.vgrow="ALWAYS" styleClass="settings-scroll">
+        <content>
+            <VBox fx:id="settingsBody" spacing="10" minWidth="0">
+                <VBox styleClass="settings-section" spacing="6">
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Label text="AI model" styleClass="section-title" />
+                        <Region HBox.hgrow="ALWAYS" />
+                        <Label fx:id="modelLocationPill" text="Local" styleClass="status-pill" />
+                    </HBox>
+                    <ComboBox fx:id="modelChoice" maxWidth="Infinity" styleClass="settings-field" onAction="#onModelChanged" />
+                    <Label fx:id="modelDetailLabel" text="Model" styleClass="muted-copy" wrapText="true" />
+                    <Label fx:id="modelHintLabel" text="Choose the model Puppy should use." styleClass="muted-copy" wrapText="true" />
+                    <Label fx:id="aiStatusLabel" text="" styleClass="muted-copy" wrapText="true" managed="false" visible="false" />
+                </VBox>
+                <VBox fx:id="openRouterKeySection" styleClass="settings-section" spacing="6" managed="false" visible="false">
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Label text="OpenRouter API key" styleClass="section-title" />
+                        <Region HBox.hgrow="ALWAYS" />
+                        <Label fx:id="openRouterKeyPill" text="Not configured" styleClass="status-pill" />
+                    </HBox>
+                    <Label fx:id="openRouterKeyStatus" text="OpenRouter API key: not configured." styleClass="muted-copy" wrapText="true" />
+                    <PasswordField fx:id="openRouterKeyField" promptText="Paste your OpenRouter API key" maxWidth="Infinity" styleClass="settings-field" onAction="#onSaveOpenRouterKey" />
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Button fx:id="saveOpenRouterKeyButton" text="Save key" onAction="#onSaveOpenRouterKey" styleClass="quiet-button" />
+                        <Button fx:id="removeOpenRouterKeyButton" text="Remove key" onAction="#onRemoveOpenRouterKey" styleClass="quiet-button" />
+                    </HBox>
+                    <Label fx:id="openRouterKeyHint" text="The key is stored only on this computer in Puppy's local data folder, never in the project." styleClass="muted-copy" wrapText="true" />
+                </VBox>
+                <VBox styleClass="settings-section" spacing="6">
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Label text="Local model" styleClass="section-title" />
+                        <Region HBox.hgrow="ALWAYS" />
+                        <Label text="Ollama" styleClass="status-pill" />
+                    </HBox>
+                    <Label fx:id="localModelLabel" text="Model" styleClass="muted-copy" wrapText="true" />
+                    <Label fx:id="ollamaUrlLabel" text="Server" styleClass="muted-copy" wrapText="true" />
+                    <Label text="The local model needs no API key and keeps chat on this computer." styleClass="muted-copy" wrapText="true" />
+                </VBox>
+                <VBox fx:id="instructionsSection" styleClass="settings-section" spacing="6">
+                    <Label text="More instructions" styleClass="section-title" />
+                    <Label text="Customize how Puppy replies. Built-in Puppy rules still apply. Saved changes affect the next reply in all chats, not Focus planning or mascot click messages." styleClass="muted-copy" wrapText="true" />
+                    <TextArea fx:id="instructionsInput" prefRowCount="5" wrapText="true" promptText="For example: Use simple explanations and include examples." styleClass="settings-field, instructions-editor" />
+                    <Label text="Stored locally and sent with chat requests to the selected model." styleClass="muted-copy" wrapText="true" />
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Button fx:id="saveInstructionsButton" text="Save instructions" onAction="#onSaveInstructions" styleClass="quiet-button" />
+                        <Button fx:id="resetInstructionsButton" text="Reset to default" onAction="#onResetInstructions" styleClass="quiet-button" />
+                        <Region HBox.hgrow="ALWAYS" />
+                        <Label fx:id="instructionsCounter" text="0 / 4,000" styleClass="muted-copy" />
+                    </HBox>
+                    <Label fx:id="instructionsStatus" styleClass="muted-copy" wrapText="true" />
+                </VBox>
+                <VBox styleClass="settings-section" spacing="6">
+                    <Label text="Desktop" styleClass="section-title" />
+                    <CheckBox fx:id="alwaysOnTopCheck" text="Keep Puppy above other windows" onAction="#onAlwaysOnTopChanged" />
+                    <Label text="You can collapse panels to return to the desktop mascot." styleClass="muted-copy" wrapText="true" />
+                </VBox>
+                <VBox styleClass="settings-section" spacing="6">
+                    <Label text="About Puppy AI" styleClass="section-title" />
+                    <Label fx:id="versionLabel" text="Version" styleClass="muted-copy" />
+                </VBox>
+            </VBox>
+        </content>
+    </ScrollPane>
 </VBox>
