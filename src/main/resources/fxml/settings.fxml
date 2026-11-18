@@ -71,7 +71,7 @@
                 <VBox styleClass="settings-section" spacing="6">
                     <Label text="Desktop" styleClass="section-title" />
                     <CheckBox fx:id="alwaysOnTopCheck" text="Keep Puppy above other windows" onAction="#onAlwaysOnTopChanged" />
-                    <Label text="You can collapse panels to return to the desktop mascot." styleClass="muted-copy" wrapText="true" />
+                    <Label text="Applies to the mascot, menus and feature panels. Double-click Puppy for navigation; _ hides only its own window." styleClass="muted-copy" wrapText="true" />
                 </VBox>
                 <VBox styleClass="settings-section" spacing="6">
                     <Label text="About Puppy AI" styleClass="section-title" />

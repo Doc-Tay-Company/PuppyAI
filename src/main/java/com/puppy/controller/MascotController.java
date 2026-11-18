@@ -21,11 +21,12 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -48,7 +49,8 @@ public class MascotController {
 
     private static final double COMPACT_WIDTH = 336;
     private static final double COMPACT_HEIGHT = 252;
-    private static final double MENU_WIDTH = 380;
+    private static final double MENU_WIDTH = 420;
+    private static final double MAIN_MENU_WIDTH = 380;
     private static final double MENU_HEIGHT = 360;
     private static final double MENU_BAR_HEIGHT = 76;
     private static final double STUDY_WIDTH = 380;
@@ -88,6 +90,7 @@ public class MascotController {
 
     private final Map<Panel, Parent> cachedPanels = new EnumMap<>(Panel.class);
     private final Map<Panel, Stage> panelStages = new EnumMap<>(Panel.class);
+    private final Map<Panel, Rectangle2D> panelBounds = new EnumMap<>(Panel.class);
     private final Random random = new Random();
     private MascotStateService mascotStateService;
     private Consumer<MascotState> stateListener;
@@ -108,7 +111,8 @@ public class MascotController {
     private boolean chatExpanded;
     private boolean closed;
     private long ignoreClicksUntil;
-    private Panel activePanel;
+    private double normalChatX;
+    private double normalChatY;
     private ChatController chatController;
     private StudyController studyController;
     private FocusController focusController;
@@ -144,7 +148,11 @@ public class MascotController {
 
         // Hover is presentation only: the mascot now reacts with a hand cursor
         // and stays quiet until it is clicked.
-        shellRoot.addEventFilter(MouseEvent.MOUSE_CLICKED, this::dismissMenuOnOutsideClick);
+        shellRoot.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
+            if (isMainMenuOpen() && event.getTarget() instanceof Node node && !isWithin(node, mascotDock)) {
+                closeMenu();
+            }
+        });
         shellRoot.addEventFilter(MouseEvent.MOUSE_MOVED, event -> noteActivity());
         shellRoot.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> noteActivity());
         shellRoot.addEventFilter(MouseEvent.MOUSE_DRAGGED, event -> noteActivity());
@@ -169,26 +177,18 @@ public class MascotController {
         menuStage.focusedProperty().addListener((observable, wasFocused, focused) -> {
             if (!closed && wasFocused && !focused) {
                 Platform.runLater(() -> {
-                    if (!closed && menuStage.isShowing() && !menuStage.isFocused()) {
+                    if (!closed && isMainMenuOpen() && !menuStage.isFocused()) {
                         closeMenu();
                     }
                 });
             }
         });
-        menuStage.getScene().setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.ESCAPE) {
+        menuStage.getScene().setOnKeyPressed(this::dismissMainMenuOnEscape);
+        stage.getScene().setOnKeyPressed(this::dismissMainMenuOnEscape);
+        menuStage.setOnCloseRequest(event -> {
+            if (!closed) {
+                event.consume();
                 closeMenu();
-                event.consume();
-            }
-        });
-        stage.getScene().setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.ESCAPE) {
-                if (activePanel != null) {
-                    collapseToMascot();
-                } else {
-                    closeMenu();
-                }
-                event.consume();
             }
         });
         shellRoot.setOnContextMenuRequested(event -> {
@@ -218,12 +218,11 @@ public class MascotController {
     private void openMore() {
         noteActivity();
         hideBubble();
-        if (menuHost.isVisible() && activePanel == null && menuHost.getChildren().size() > 0
+        if (menuHost.isVisible() && menuHost.getChildren().size() > 0
                 && menuHost.getChildren().get(0) != mainMenu) {
             showMainMenu();
             return;
         }
-        activePanel = null;
         menuHost.getChildren().setAll(createMoreMenu());
         showMenu(MENU_WIDTH, MENU_HEIGHT);
     }
@@ -234,13 +233,20 @@ public class MascotController {
         closeMenu();
         try {
             Parent view = cachedPanels.computeIfAbsent(panel, this::loadPanel);
-            if (activePanel != null && activePanel != panel) {
-                hidePanelStage(activePanel);
+            Stage panelStage = panelStages.get(panel);
+            if (panelStage == null) {
+                panelStage = createPanelStage(panel, view);
+                panelStages.put(panel, panelStage);
+                positionPanelStage(panel, panelStage, false);
+                rememberPanelBounds(panel, panelStage);
             }
-            activePanel = panel;
-            Stage panelStage = panelStages.computeIfAbsent(panel, ignored -> createPanelStage(panel, view));
-            positionPanelStage(panel, panelStage, false);
+            Rectangle2D saved = panelBounds.get(panel);
             panelStage.show();
+            panelStage.setIconified(false);
+            panelStage.setWidth(saved.getWidth());
+            panelStage.setHeight(saved.getHeight());
+            panelStage.setX(saved.getMinX());
+            panelStage.setY(saved.getMinY());
             panelStage.toFront();
         } catch (PanelLoadException e) {
             throw new IllegalStateException("Could not open " + panel.name().toLowerCase() + " panel", e.getCause());
@@ -251,7 +257,6 @@ public class MascotController {
     public void returnToMainMenu() {
         noteActivity();
         hideBubble();
-        resetChatExpansion();
         showMainMenu();
     }
 
@@ -273,7 +278,8 @@ public class MascotController {
         Parent view = loader.load();
         chatController = loader.getController();
         chatController.attach(services.chatService(), services.threadManager().executor(),
-                mascotStateService, services.focusService(), this::closePanel, this::collapseToMascot,
+                mascotStateService, services.focusService(), () -> hidePanel(Panel.CHAT, true),
+                () -> hidePanel(Panel.CHAT, false),
                 this::returnToMainMenu, this::toggleChatExpansion, this::openFocusPanel);
         chatController.attachHistory(services.chatHistory());
         chatController.attachQuiz(services.quizService());
@@ -293,7 +299,8 @@ public class MascotController {
         Parent view = loader.load();
         focusController = loader.getController();
         focusController.attach(services.focusService(), mascotStateService,
-                services.threadManager().executor(), this::closePanel, this::collapseToMascot,
+                services.threadManager().executor(), () -> hidePanel(Panel.FOCUS, true),
+                () -> hidePanel(Panel.FOCUS, false),
                 this::returnToMainMenu);
         return view;
     }
@@ -302,7 +309,8 @@ public class MascotController {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/study.fxml"));
         Parent view = loader.load();
         studyController = loader.getController();
-        studyController.attach(mascotStateService, this::closePanel, this::collapseToMascot,
+        studyController.attach(mascotStateService, () -> hidePanel(Panel.STUDY, true),
+                () -> hidePanel(Panel.STUDY, false),
                 this::returnToMainMenu);
         return view;
     }
@@ -314,7 +322,8 @@ public class MascotController {
         settingsController.attach(services.config().appVersion(),
                 services.modelService(),
                 stage.isAlwaysOnTop(),
-                this::setAlwaysOnTop, this::closePanel, this::collapseToMascot,
+                this::setAlwaysOnTop, () -> hidePanel(Panel.SETTINGS, true),
+                () -> hidePanel(Panel.SETTINGS, false),
                 this::returnToMainMenu, this::resizeSettingsPanel);
         settingsController.attachPersistence(services.threadManager().executor(), services.appSettings());
         return view;
@@ -324,7 +333,7 @@ public class MascotController {
         VBox card = new VBox(7);
         card.getStyleClass().add("more-menu");
         card.setAlignment(Pos.CENTER);
-        card.getChildren().add(new Label("More"));
+        card.getChildren().add(menuHeader("More"));
         card.getChildren().add(menuItem("Focus planner", () -> openPanel(Panel.FOCUS)));
         card.getChildren().add(menuItem("Settings", () -> openPanel(Panel.SETTINGS)));
         card.getChildren().add(menuItem("Chat history", () -> {
@@ -332,7 +341,6 @@ public class MascotController {
             chatController.showHistory();
         }));
         card.getChildren().add(menuItem("Help / About", this::showAbout));
-        card.getChildren().add(menuItem("Collapse to mascot", this::collapseToMascot));
         card.getChildren().add(menuItem("Back to menu", this::showMainMenu));
         card.getChildren().add(menuItem("Quit Puppy", this::quit));
         return card;
@@ -346,11 +354,29 @@ public class MascotController {
         return button;
     }
 
+    private HBox menuHeader(String title) {
+        Label label = new Label(title);
+        label.getStyleClass().add("panel-title");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
+        Button collapse = new Button("_");
+        collapse.getStyleClass().add("window-button");
+        collapse.setAccessibleText("Collapse menu");
+        collapse.setOnAction(event -> closeMenu());
+        Button close = new Button("X");
+        close.getStyleClass().add("window-button");
+        close.setAccessibleText("Close menu");
+        close.setOnAction(event -> closeMenu());
+        HBox header = new HBox(8, label, spacer, collapse, close);
+        header.setAlignment(Pos.CENTER_LEFT);
+        return header;
+    }
+
     private void showAbout() {
         VBox about = new VBox(10);
         about.getStyleClass().add("more-menu");
         about.setAlignment(Pos.CENTER);
-        about.getChildren().add(new Label("Puppy AI"));
+        about.getChildren().add(menuHeader("Puppy AI"));
         about.getChildren().add(new Label("A little desktop companion for chat and focused study."));
         about.getChildren().add(new Label(
                 "Chat runs through OpenRouter or the local Ollama model."));
@@ -362,25 +388,8 @@ public class MascotController {
     private void showMainMenu() {
         noteActivity();
         hideBubble();
-        resetChatExpansion();
-        hideActivePanelStage();
-        activePanel = null;
         menuHost.getChildren().setAll(mainMenu);
-        showMenu(MENU_WIDTH, MENU_BAR_HEIGHT);
-    }
-
-    private void closePanel() {
-        collapseToMascot();
-    }
-
-    private void collapseToMascot() {
-        noteActivity();
-        hideBubble();
-        resetChatExpansion();
-        hideActivePanelStage();
-        activePanel = null;
-        closeMenu();
-        restoreMascotState();
+        showMenu(MAIN_MENU_WIDTH, MENU_BAR_HEIGHT);
     }
 
     private void closeMenu() {
@@ -391,6 +400,26 @@ public class MascotController {
         if (menuStage != null) {
             menuStage.hide();
         }
+    }
+
+    private boolean isMainMenuOpen() {
+        return menuStage != null && menuStage.isShowing() && menuHost.getChildren().contains(mainMenu);
+    }
+
+    private void dismissMainMenuOnEscape(KeyEvent event) {
+        if (event.getCode() == KeyCode.ESCAPE && isMainMenuOpen()) {
+            closeMenu();
+            event.consume();
+        }
+    }
+
+    private static boolean isWithin(Node node, Node ancestor) {
+        for (Node current = node; current != null; current = current.getParent()) {
+            if (current == ancestor) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void showMenu(double width, double height) {
@@ -416,7 +445,7 @@ public class MascotController {
             auxiliary.initOwner(stage);
         }
         auxiliary.setTitle(services.config().appName() + " - " + title);
-        auxiliary.setAlwaysOnTop(owned && stage.isAlwaysOnTop());
+        auxiliary.setAlwaysOnTop(stage.isAlwaysOnTop());
         auxiliary.setResizable(false);
         Scene scene = new Scene(content);
         scene.setFill(Color.TRANSPARENT);
@@ -430,23 +459,79 @@ public class MascotController {
         panelStage.setOnCloseRequest(event -> {
             if (!closed) {
                 event.consume();
-                hidePanel(panel);
+                hidePanel(panel, true);
             }
         });
-        panelStage.getScene().setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.ESCAPE) {
-                hidePanel(panel);
-                event.consume();
-            }
-        });
+        installPanelDragging(panel, panelStage, content);
         return panelStage;
+    }
+
+    private void installPanelDragging(Panel panel, Stage panelStage, Parent content) {
+        Node header = content.lookup(".panel-header");
+        if (header == null) {
+            header = content.lookup(".study-header");
+        }
+        if (header == null) {
+            throw new IllegalStateException("A feature panel must have a draggable header.");
+        }
+        Node dragHeader = header;
+        double[] origin = new double[4];
+        boolean[] pressed = new boolean[1];
+        header.setCursor(Cursor.MOVE);
+        header.addEventHandler(MouseEvent.MOUSE_PRESSED, event -> {
+            pressed[0] = false;
+            if (event.getButton() != MouseButton.PRIMARY || !isHeaderDragTarget(event.getTarget(), dragHeader)) {
+                return;
+            }
+            noteActivity();
+            origin[0] = event.getScreenX();
+            origin[1] = event.getScreenY();
+            origin[2] = panelStage.getX();
+            origin[3] = panelStage.getY();
+            pressed[0] = true;
+        });
+        header.addEventHandler(MouseEvent.MOUSE_DRAGGED, event -> {
+            if (!pressed[0] || !event.isPrimaryButtonDown()) {
+                return;
+            }
+            double dx = event.getScreenX() - origin[0];
+            double dy = event.getScreenY() - origin[1];
+            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+                return;
+            }
+            Rectangle2D bounds = Screen.getScreensForRectangle(event.getScreenX(), event.getScreenY(), 1, 1)
+                    .stream().findFirst().orElse(Screen.getPrimary()).getVisualBounds();
+            panelStage.setX(clamp(origin[2] + dx, bounds.getMinX(),
+                    Math.max(bounds.getMinX(), bounds.getMaxX() - panelStage.getWidth())));
+            panelStage.setY(clamp(origin[3] + dy, bounds.getMinY(),
+                    Math.max(bounds.getMinY(), bounds.getMaxY() - panelStage.getHeight())));
+            rememberPanelBounds(panel, panelStage);
+            event.consume();
+        });
+        header.addEventHandler(MouseEvent.MOUSE_RELEASED, event -> pressed[0] = false);
+    }
+
+    private static boolean isHeaderDragTarget(Object target, Node header) {
+        if (!(target instanceof Node node)) {
+            return false;
+        }
+        for (Node current = node; current != null && current != header; current = current.getParent()) {
+            if (current instanceof javafx.scene.control.Control && !(current instanceof Label)) {
+                return false;
+            }
+        }
+        return isWithin(node, header);
     }
 
     /** Recomputes the Settings window height when the key section appears or hides. */
     private void resizeSettingsPanel() {
         Stage panelStage = panelStages.get(Panel.SETTINGS);
         if (panelStage != null) {
+            Rectangle2D saved = panelBounds.get(Panel.SETTINGS);
             positionPanelStage(Panel.SETTINGS, panelStage, false);
+            panelStage.setX(saved.getMinX());
+            panelStage.setY(saved.getMinY());
+            rememberPanelBounds(Panel.SETTINGS, panelStage);
         }
     }
 
@@ -527,40 +612,37 @@ public class MascotController {
      * @return {@code true} while the panel is expanded
      */
     private boolean toggleChatExpansion() {
-        if (activePanel != Panel.CHAT) {
+        Stage chatStage = panelStages.get(Panel.CHAT);
+        if (chatStage == null || !chatStage.isShowing()) {
             return false;
         }
         noteActivity();
+        if (!chatExpanded) {
+            normalChatX = chatStage.getX();
+            normalChatY = chatStage.getY();
+        }
         chatExpanded = !chatExpanded;
-        positionPanelStage(Panel.CHAT, panelStages.get(Panel.CHAT), chatExpanded);
+        positionPanelStage(Panel.CHAT, chatStage, chatExpanded);
+        if (!chatExpanded) {
+            chatStage.setX(normalChatX);
+            chatStage.setY(normalChatY);
+        }
+        rememberPanelBounds(Panel.CHAT, chatStage);
         return chatExpanded;
     }
 
-    private void hidePanel(Panel panel) {
-        hidePanelStage(panel);
-        if (activePanel == panel) {
-            activePanel = null;
-        }
-        if (panel == Panel.CHAT) {
-            resetChatExpansion();
-        }
-        restoreMascotState();
-    }
-
-    private void hideActivePanelStage() {
-        if (activePanel != null) {
-            hidePanelStage(activePanel);
-        }
-    }
-
-    private void hidePanelStage(Panel panel) {
-        if (panel == Panel.CHAT && chatController != null) {
+    private void hidePanel(Panel panel, boolean cancelGeneration) {
+        noteActivity();
+        hideBubble();
+        if (panel == Panel.CHAT && cancelGeneration && chatController != null) {
             chatController.close();
         }
         Stage panelStage = panelStages.get(panel);
         if (panelStage != null) {
+            rememberPanelBounds(panel, panelStage);
             panelStage.hide();
         }
+        restoreMascotState();
     }
 
     private void setAlwaysOnTop(boolean alwaysOnTop) {
@@ -568,13 +650,13 @@ public class MascotController {
         if (menuStage != null) {
             menuStage.setAlwaysOnTop(alwaysOnTop);
         }
+
+        panelStages.values().forEach(panelStage -> panelStage.setAlwaysOnTop(alwaysOnTop));
     }
 
-    private void resetChatExpansion() {
-        chatExpanded = false;
-        if (chatController != null) {
-            chatController.setExpanded(false);
-        }
+    private void rememberPanelBounds(Panel panel, Stage panelStage) {
+        panelBounds.put(panel, new Rectangle2D(panelStage.getX(), panelStage.getY(),
+                panelStage.getWidth(), panelStage.getHeight()));
     }
 
     private Rectangle2D primaryScreenBounds() {
@@ -630,9 +712,7 @@ public class MascotController {
         }
         if (event.getClickCount() >= 2) {
             singleClickDelay.stop();
-            if (activePanel != null) {
-                collapseToMascot();
-            } else if (menuHost.isVisible()) {
+            if (isMainMenuOpen()) {
                 closeMenu();
             } else {
                 showMainMenu();
@@ -648,7 +728,7 @@ public class MascotController {
 
     private void onMascotSingleClick() {
         noteActivity();
-        if (activePanel != null || menuHost.isVisible()) {
+        if (hasVisiblePanels() || menuHost.isVisible()) {
             return;
         }
         if (mascotStateService.getState() == MascotState.SLEEPING) {
@@ -677,7 +757,7 @@ public class MascotController {
     }
 
     private void enterSleepIfEligible() {
-        if (activePanel != null || menuHost.isVisible()
+        if (hasVisiblePanels() || menuHost.isVisible()
                 || (studyController != null && studyController.isTimerRunning())
                 || (focusController != null && focusController.isTimerRunning())
                 || isBusyAnimation()) {
@@ -696,7 +776,7 @@ public class MascotController {
     }
 
     private void showNotificationThenReschedule() {
-        boolean compact = activePanel == null && !menuHost.isVisible()
+        boolean compact = !hasVisiblePanels() && !menuHost.isVisible() && !isBusyAnimation()
                 && mascotStateService.getState() != MascotState.SLEEPING;
         if (compact && !mascotBubble.isVisible()) {
             showBubble(MascotMessages.randomNotification(random), true);
@@ -705,7 +785,7 @@ public class MascotController {
     }
 
     private void showBubble(String message, boolean notification) {
-        if (activePanel != null || mascotBubble == null) {
+        if (hasVisiblePanels() || mascotBubble == null) {
             return;
         }
         mascotBubble.getStyleClass().remove("notification-bubble");
@@ -729,40 +809,30 @@ public class MascotController {
     }
 
     private void restoreMascotState() {
-        if (studyController != null && studyController.isTimerRunning()) {
-            mascotStateService.setState(MascotState.STUDYING);
-        } else if (focusController != null && focusController.isTimerRunning()) {
+        if (chatController != null && chatController.isResponding()) {
+            mascotStateService.setState(chatController.activityState());
+        } else if (hasRunningTimer()) {
             mascotStateService.setState(MascotState.STUDYING);
         } else {
             mascotStateService.resetToIdle();
         }
     }
 
-    private void dismissMenuOnOutsideClick(MouseEvent event) {
-        if (!menuHost.isVisible()) {
-            return;
-        }
-        Object target = event.getTarget();
-        if (target instanceof Node node
-                && !isWithin(node, menuHost)
-                && !isWithin(node, mascotDock)) {
-            closeMenu();
-        }
-    }
-
-    private static boolean isWithin(Node node, Node ancestor) {
-        for (Node current = node; current != null; current = current.getParent()) {
-            if (current == ancestor) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void onMascotStateChanged(MascotState state) {
         Runnable apply = () -> {
-            animator.play(state);
-            if (state == MascotState.SLEEPING) {
+            if (closed) {
+                return;
+            }
+            MascotState current = mascotStateService.getState();
+            MascotState effective = chatController != null && chatController.isResponding()
+                    ? chatController.activityState()
+                    : hasRunningTimer() ? MascotState.STUDYING : current;
+            if (effective != current) {
+                mascotStateService.setState(effective);
+                return;
+            }
+            animator.play(effective);
+            if (effective == MascotState.SLEEPING) {
                 hideBubble();
             }
         };
@@ -771,6 +841,15 @@ public class MascotController {
         } else {
             Platform.runLater(apply);
         }
+    }
+
+    private boolean hasVisiblePanels() {
+        return panelStages.values().stream().anyMatch(Stage::isShowing);
+    }
+
+    private boolean hasRunningTimer() {
+        return studyController != null && studyController.isTimerRunning()
+                || focusController != null && focusController.isTimerRunning();
     }
 
     private ContextMenu contextMenu() {

@@ -1,6 +1,6 @@
 # Puppy AI — Implementation Status
 
-Last updated: 2026-11-18
+Last updated: 2026-11-19
 
 ## Document ownership and current scope
 
@@ -181,6 +181,47 @@ actual results and a concrete remaining-feature plan. No separate plan file.
   smoke checks. Structural validation cannot prove factual correctness or
   grounding; model output still needs user judgment. Existing non-failing
   JavaFX/native-access/logging warnings remain.
+
+### Independent feature windows and persistent visibility (2026-11-19)
+
+- Latest confirmed interaction: Chat, Study, Focus and Settings may all remain
+  open at the same time, with one cached window for each feature. Selecting an
+  existing feature restores/brings forward that instance, without hiding others,
+  recentering it, discarding drafts or resetting Chat expansion.
+- Mascot double-click **always** opens/toggles the compact four-button main menu.
+  It no longer automatically restores a last active/collapsed panel or submenu.
+  Menu buttons inside feature windows open navigation without hiding their
+  originating window. This supersedes the initial last-collapsed-view behavior.
+- The main menu has no `_`/X and retains focus-loss/outside-click/Escape/toggle
+  dismissal. More/About and feature panels remain open on outside clicks, focus
+  loss or Escape. Submenu `_` and X affect navigation only, never feature windows.
+- `_` hides only its originating window and keeps background Chat/quiz generation
+  and timers running. X/OS close also hides only its own window, but explicitly
+  closing Chat cancels pending generation. Reopen through the feature's menu
+  item. Cached attempts, drafts, timer state and geometry survive hiding for the
+  running app; no window-layout or quiz-attempt database persistence was added.
+- Feature headers are draggable, excluding buttons/input controls. Dragging is
+  bounded to the pointer monitor's visual workspace. Current first-open positions
+  remain unchanged; refocusing/reopening does not recenter a window. In-memory
+  bounds preserve size/position across JavaFX native hide/show resets. Settings
+  content resizing preserves its position; Chat Restore returns to its prior
+  normal position. No window cascading or restart-layout persistence is included.
+- The persisted always-on-top preference applies to every feature panel and the
+  mascot/menu, including cached hidden panels. Turning it off allows other apps
+  to cover those windows without closing them.
+- Study and Focus countdowns remain independent and continue while hidden.
+  The shell resolves mascot state to active Chat Thinking/Talking first, then
+  Studying while either timer runs, then the requested idle/reaction state.
+  Pausing/resetting one timer cannot override another running timer or an active
+  chat response. Sleep/notification eligibility checks every visible panel and
+  running/background activity instead of relying on one active-panel pointer.
+- Regression coverage includes existing menu focus/close behavior, cached drafts
+  and Chat expansion, plus an isolated JavaFX/HTTP probe for four simultaneous
+  windows, singleton reopening, header/button drag handling, retained geometry,
+  independent timers/shared mascot priority, hidden background reply completion,
+  and X cancellation without affecting other windows.
+- Verification: **`mvn -q test` - 145 tests, 0 failures, 0 errors, 0 skipped**.
+  Manual OS-level visual checks remain part of VERIFY-1.
 
 ### Concrete next implementation plan
 
@@ -367,7 +408,7 @@ have passed; record the actual validation command/result when closing an item.
 | QUIZ-1 | Quiz models, structured request extraction/generation/parser, per-question difficulty and deterministic in-memory attempt logic | None | Complete - strict generation and attempt tests passed |
 | QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | Complete - atomic rollback/retry and typed restart tests passed |
 | QUIZ-3 | Multiple Quiz composer mode and Puppy-styled interactive Chat cards, navigation/feedback/score/review/retry | QUIZ-2 | Complete - isolated JavaFX/HTTP integration probe passed |
-| VERIFY-1 | Cross-feature restart/failure/regression tests, manual local/cloud smoke checks and current-behavior documentation | DB-2, DB-3, DB-4, PROMPT-1, QUIZ-3 | In progress - 144 automated tests passed; live-provider/manual release checks pending |
+| VERIFY-1 | Cross-feature restart/failure/regression tests, manual local/cloud smoke checks and current-behavior documentation | DB-2, DB-3, DB-4, PROMPT-1, QUIZ-3 | In progress - 145 automated tests passed; live-provider/manual release checks pending |
 
 Suggested delivery order: DB-1 -> DB-2 -> DB-3 -> DB-4 -> PROMPT-1 ->
 QUIZ-1 -> QUIZ-2 -> QUIZ-3 -> VERIFY-1. Dependencies in the ledger, not this
@@ -463,7 +504,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage, atomic quiz integration and automated checks above |
 | 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
-| 6 | Study mode, settings, integration | Core features shipped: Pomodoro/settings, supplemental instructions and Chat quizzes; remaining mascot-priority/integration follow-ups and manual verification deferred |
+| 6 | Study mode, settings, integration | Core features shipped: Pomodoro/settings, supplemental instructions, Chat quizzes, independent windows and timer/chat mascot priority; manual integration verification pending |
 | 7 | Testing, optimization, packaging | Pending |
 
 ## Completed (milestone 1)
@@ -750,9 +791,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
 - **Sprites:** numbered transparent PNG frames are stored separately by state.
   `MascotSprites` defines their order and per-image timing; the animator loads
   each image once and switches images during playback.
-- **State priority:** `DefaultMascotStateService` currently lets the latest
-  request win; the priority rules (study must not be interrupted by an idle
-  refresh) belong to milestone 6.
+- **State priority:** `DefaultMascotStateService` publishes requested state
+  changes. The shell reconciles them with active Chat feedback and both running
+  timers so idle/reaction refreshes cannot interrupt an active study session or
+  AI response. Hidden work is included in that arbitration.
 - **Data directory:** `AppConfig` resolves `%LOCALAPPDATA%\PuppyAI` (or
   `~/.local/share/PuppyAI`). SQLite stores chat, Focus, non-secret settings and
   quiz definitions there;

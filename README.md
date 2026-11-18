@@ -13,8 +13,9 @@ with reusable saved questions and in-memory learning attempts.
 **Status: local and cloud AI chat plus Focus planning are wired up.** The app
 launches as a frameless, transparent, always-on-top puppy. The mascot stays in
 its desktop window while the menu and feature panels open in separate windows.
-Click the puppy for a random message, double-click to open Study / Focus / Chat /
-More. After five idle minutes the puppy falls asleep; click it to wake it up.
+Click the puppy for a random message; double-click always opens or toggles the
+compact main menu, even while feature windows are open or hidden. After
+five idle minutes the puppy falls asleep; click it to wake it up.
 Chat streams Markdown replies from the selected model: **OpenRouter** in the
 cloud when a key is configured, or the local **Ollama** model as a fallback.
 Puppy offers **Focus plan / Multiple Quiz / Model / Help** next to the message box and can read
@@ -141,7 +142,9 @@ Controls use English; questions follow the request language.
 - Normal chat remains available after generation. Switching conversations keeps
   each card's attempt in memory. **Restarting Puppy clears all selections,
   scores, review state and progress**, while saved questions remain reusable.
-- **Cancel**, switching conversations, or closing Chat stops pending generation.
+- **Cancel**, switching conversations, or X/OS closing Chat stops pending generation.
+  Collapsing Chat with `_` or opening another feature keeps generation running
+  in the background; reopen Chat through the menu to see the result.
   A generation error offers manual **Retry generation**. A storage error retains
   the validated quiz for **Retry save**, without another model request; answering
   is enabled only after its definition and chat entry save successfully together.
@@ -199,25 +202,46 @@ mvn javafx:run        # launch Puppy
 | --- | --- |
 | Drag with left mouse button | Move the puppy around the desktop |
 | Click the puppy | Show a random, friendly message |
-| Double-click the puppy | Open or close the Study / Focus / Chat / More menu |
+| Double-click the puppy | Always open/toggle the compact main menu, regardless of open or hidden feature windows |
 | Idle for five minutes | Puppy falls asleep; click it to wake it up |
 | Every two minutes | Puppy may show a quiet notification while idle |
-| Study / Focus / Chat | Open the matching panel in a separate window without moving the mascot |
-| Menu (inside a panel) | Return to the Study / Focus / Chat / More menu |
+| Study / Focus / Chat | Open or bring forward that feature's window without hiding other windows or moving the mascot |
+| Menu (inside a panel) | Open navigation without hiding the panel or resetting expanded Chat |
+| Drag a feature-panel header | Move that window; buttons and input controls do not initiate dragging |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
 | Chat options | Choose Chat, Focus plan, Multiple Quiz, Model or Help beside the message box |
 | Right-click a chat message | Copy it, or reuse it in the message box |
 | Ctrl+V in the message box | Paste copied text |
 | `/model` | Keyboard fallback to show the selected model and provider |
-| More | Open Focus Planner, Settings, session chat history, Help / About, collapse, or quit |
+| More | Open Focus Planner, Settings, session chat history, Help / About, or quit |
 | Settings | Switch between OpenRouter cloud models and the local model, and manage the OpenRouter key |
-| Escape | Close the current panel/menu and return to the puppy |
+| Click outside / Escape | Dismiss the compact main menu; keep More/About and feature panels open |
+| `_` at the top of a menu/panel | Hide only that window; Chat/quiz generation and timers continue in the background |
+| X at the top of a menu/panel | Hide only that window; Chat also cancels its pending generation |
 | Right-click | Development menu: switch mascot states or quit |
 | Quit Puppy | Closes the window and shuts services down cleanly |
 
 There is deliberately no title bar, so use **More → Quit Puppy** (or the
 right-click development menu) to exit.
+
+The compact main menu has only Study / Focus / Chat / More, with no `_` or X;
+it dismisses on outside clicks, focus loss, Escape or a second mascot double-click.
+More/About and feature panels stay open when another application receives focus.
+**Keep Puppy above other windows** applies to the
+mascot, menus and all feature panels: when enabled they remain above other apps;
+when disabled they stay open but can be covered by other windows.
+
+Chat, Study, Focus and Settings can all be open simultaneously, with one cached
+window per feature. Re-selecting a feature restores or brings forward that same
+window without recentering it. Drag headers to arrange windows; their positions,
+Chat expansion, drafts, timers and quiz attempts remain in memory when hidden.
+The mascot always opens navigation instead of forcing the last hidden panel to
+reappear. Layout/attempt state is not newly persisted across app restarts.
+
+Study and Focus timers run independently, including while hidden. Chat may show
+Thinking/Talking while a request is active; afterward Puppy stays Studying while
+either timer is running. Pausing one timer does not override the other timer.
 
 ## Local database and privacy
 
@@ -376,7 +400,8 @@ src/main/resources/
 src/test/java/com/puppy/
 ├── ai/           OpenRouterClientTest, OllamaClientTest
 ├── config/       AiSettingsStoreTest, DatabaseSettingsTest
-├── controller/   FxmlLayoutTest, FocusControllerWorkerTest, QuizInteractionTest
+├── controller/   FxmlLayoutTest, FocusControllerWorkerTest, QuizInteractionTest,
+│                 MultiPanelInteractionTest
 ├── database/     DatabaseTest
 ├── document/     DocumentTextExtractorTest
 ├── service/      ChatPromptBuilderTest, ChatServiceTest, ModelServiceTest,
@@ -534,8 +559,9 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
   directly below the picker only while a cloud model is selected. Cloud models
   stay listed before a key exists; with no saved choice, a key defaults to
   Gemini 2.5 Flash. The local model needs no key.
-- **More** offers Focus Planner, Settings, session chat history, Help / About,
-  collapse-to-mascot and Quit.
+- **More** offers Focus Planner, Settings, session chat history, Help / About and
+  Quit. More/About have top `_` collapse and X close controls; the compact main
+  menu does not.
 
 Chat history, extracted attachments, Focus data, model choice and desktop settings
 persist in SQLite; the OpenRouter key remains a separate local file. A true hide-to-tray option is deferred;

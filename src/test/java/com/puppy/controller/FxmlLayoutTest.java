@@ -145,9 +145,10 @@ class FxmlLayoutTest {
                         "The menu itself should keep its visible surface");
                 Event.fireEvent(shell, new KeyEvent(KeyEvent.KEY_PRESSED, "", "",
                         KeyCode.ESCAPE, false, false, false, false));
-                assertFalse(menuStage.isShowing(),
-                        "Escape should dismiss the menu");
+                assertFalse(menuStage.isShowing(), "Escape should dismiss the compact main menu");
                 Event.fireEvent(mascotDock, doubleClick());
+                assertTrue(menuStage.isShowing(), "Double-clicking the mascot should reopen the compact main menu");
+                assertPersistentNavigation(shell, mascotDock, menuStage);
                 menuStage = findShowingStage(".main-menu");
                 menu = (HBox) menuStage.getScene().lookup(".main-menu");
 
@@ -182,7 +183,7 @@ class FxmlLayoutTest {
                 assertTrue(studyContentBounds.getMaxY() <= studyStage.getScene().getHeight() + 1,
                         "Study content should fit inside the visible window without bottom clipping");
                 assertTrue(stage.isAlwaysOnTop(), "The mascot should remain above panel windows");
-                assertFalse(studyStage.isAlwaysOnTop(), "Study should not be always-on-top of the mascot");
+                assertTrue(studyStage.isAlwaysOnTop(), "Study must honor the global always-on-top preference");
                 assertNull(studyStage.getOwner(), "Study should be positioned independently of the mascot stage");
                 assertEquals("Study Mode",
                         ((Label) studyStage.getScene().lookup(".study-header .panel-title")).getText(),
@@ -202,6 +203,17 @@ class FxmlLayoutTest {
                 studyToggle.fire();
                 assertTrue("Resume".equals(studyToggle.getText()),
                         "Pausing a session should offer Resume");
+                assertFocusLossKeepsVisible(studyStage);
+                closeActivePanel(studyStage, 0);
+                Event.fireEvent(mascotDock, doubleClick());
+                assertFalse(studyStage.isShowing(), "Mascot navigation must not force the collapsed panel open");
+                ((Button) ((HBox) findShowingStage(".main-menu").getScene().lookup(".main-menu")).getChildren().get(0)).fire();
+                assertTrue(studyStage.isShowing());
+                assertEquals("Resume", studyToggle.getText(), "Restoring Study must retain its paused timer state");
+                Event.fireEvent(mascotDock, doubleClick());
+                Event.fireEvent(studyStage.getScene().getRoot(), escape());
+                assertTrue(studyStage.isShowing(), "Escape and mascot double-click must not dismiss a feature panel");
+                ((Button) ((HBox) findShowingStage(".main-menu").getScene().lookup(".main-menu")).getChildren().get(0)).fire();
                 closeActivePanel(studyStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -216,6 +228,13 @@ class FxmlLayoutTest {
                         "The Focus Planner should show its sessions list");
                 assertNull(focusStage.getOwner(),
                         "The Focus panel should be positioned independently of the mascot stage");
+                TextField focusDraft = (TextField) focusStage.getScene().lookup("#taskSubject");
+                focusDraft.setText("Retain this Focus draft");
+                closeActivePanel(focusStage, 0);
+                Event.fireEvent(mascotDock, doubleClick());
+                ((Button) ((HBox) findShowingStage(".main-menu").getScene().lookup(".main-menu")).getChildren().get(1)).fire();
+                assertTrue(focusStage.isShowing());
+                assertEquals("Retain this Focus draft", focusDraft.getText());
                 closeActivePanel(focusStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -290,6 +309,15 @@ class FxmlLayoutTest {
                 assertTrue(messages.lookupAll(".message-bubble").stream()
                                 .allMatch(node -> node.getOnContextMenuRequested() != null),
                         "Every message should offer a right-click copy menu");
+                expandChat.fire();
+                closeActivePanel(chatStage, 0);
+                Event.fireEvent(mascotDock, doubleClick());
+                assertFalse(chatStage.isShowing());
+                ((Button) ((HBox) findShowingStage(".main-menu").getScene().lookup(".main-menu")).getChildren().get(2)).fire();
+                assertTrue(chatStage.isShowing(), "The Chat menu item must restore the cached window");
+                assertEquals("Restore", expandChat.getText(), "Expanded Chat state must survive collapse");
+                assertEquals(screen.getWidth() - 96, chatStage.getWidth(), 1);
+                assertEquals("Math is important and I need more time", messageInput.getText());
                 closeActivePanel(chatStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -317,7 +345,18 @@ class FxmlLayoutTest {
                 assertFalse(stage.isAlwaysOnTop(),
                         "The in-session always-on-top setting should update the mascot stage");
                 assertFalse(settingsStage.isAlwaysOnTop(),
-                        "Panel stages should stay behind the mascot when always-on-top is disabled");
+                        "Settings must follow the disabled global always-on-top preference");
+                assertFalse(studyStage.isAlwaysOnTop());
+                assertFalse(focusStage.isAlwaysOnTop());
+                assertFalse(chatStage.isAlwaysOnTop());
+                assertFalse(menuStage.isAlwaysOnTop());
+                closeActivePanel(settingsStage, 0);
+                Event.fireEvent(mascotDock, doubleClick());
+                ((Button) ((HBox) findShowingStage(".main-menu").getScene().lookup(".main-menu")).getChildren().get(3)).fire();
+                ((Button) ((VBox) findShowingStage(".more-menu").getScene().lookup(".more-menu")).getChildren().get(2)).fire();
+                assertTrue(settingsStage.isShowing());
+                assertEquals("Keep this unsaved draft", ((TextArea) settingsStage.getScene()
+                        .lookup("#instructionsInput")).getText());
                 closeActivePanel(settingsStage, 1);
 
                 Event.fireEvent(mascotDock, doubleClick());
@@ -432,8 +471,93 @@ class FxmlLayoutTest {
                     "The actual UI-created chat snapshots must survive a database reopen");
             assertEquals(expectedActive, reopened.chatHistory().activeId());
         }
-        assertNull(failure.get(), "An FXML layout could not be loaded");
+        if (failure.get() != null) {
+            throw new AssertionError("An FXML layout could not be loaded", failure.get());
+        }
         Platform.exit();
+    }
+
+    private static KeyEvent escape() {
+        return new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ESCAPE, false, false, false, false);
+    }
+
+    private static void assertFocusLossKeepsVisible(Stage target) {
+        assertFocusLoss(target, true);
+    }
+
+    private static void assertFocusLoss(Stage target, boolean staysVisible) {
+        Stage other = new Stage();
+        try {
+            target.toFront();
+            target.requestFocus();
+            awaitFx(target::isFocused);
+            other.setScene(new Scene(new StackPane(new Label("Another application")), 160, 100));
+            other.setAlwaysOnTop(true);
+            other.show();
+            other.toFront();
+            other.requestFocus();
+            awaitFx(() -> staysVisible ? other.isFocused() : !target.isShowing());
+            var pending = new java.util.concurrent.CompletableFuture<Void>();
+            Platform.runLater(() -> pending.complete(null));
+            awaitFx(pending::isDone);
+            assertFalse(target.isFocused());
+            assertEquals(staysVisible, target.isShowing(),
+                    "Only the compact main menu should auto-dismiss when focus changes");
+        } finally {
+            other.close();
+        }
+    }
+
+    private static void assertPersistentNavigation(Parent shell, StackPane mascotDock, Stage menuStage) {
+        assertFocusLoss(menuStage, false);
+        Event.fireEvent(mascotDock, doubleClick());
+        Event.fireEvent(shell, hover(MouseEvent.MOUSE_CLICKED));
+        assertFalse(menuStage.isShowing(), "Clicking outside the compact main menu should dismiss it");
+        Event.fireEvent(mascotDock, doubleClick());
+        Parent menuRoot = menuStage.getScene().getRoot();
+        menuRoot.applyCss();
+        menuRoot.layout();
+        HBox main = (HBox) menuRoot.lookup(".main-menu");
+        assertEquals(List.of("Study", "Focus", "Chat", "More"),
+                main.getChildren().stream().map(Button.class::cast).map(Button::getText).toList(),
+                "The main menu must have only its original four navigation buttons");
+        assertTrue(main.lookupAll(".window-button").isEmpty());
+        for (Node node : main.getChildren()) {
+            Bounds bounds = node.localToScene(node.getBoundsInLocal());
+            assertTrue(bounds.getMinX() >= 0 && bounds.getMaxX() <= menuStage.getWidth(),
+                    "Navigation buttons must fit inside the compact menu");
+        }
+        Event.fireEvent(menuRoot, escape());
+        assertFalse(menuStage.isShowing());
+        Event.fireEvent(mascotDock, doubleClick());
+        assertTrue(isShowingStage(".main-menu"));
+        Event.fireEvent(mascotDock, doubleClick());
+        assertFalse(menuStage.isShowing(), "Mascot double-click should toggle the compact main menu off");
+        Event.fireEvent(mascotDock, doubleClick());
+        ((Button) ((HBox) menuRoot.lookup(".main-menu")).getChildren().get(3)).fire();
+        VBox more = (VBox) menuRoot.lookup(".more-menu");
+        assertFocusLossKeepsVisible(menuStage);
+        closeActivePanel(menuStage, 0);
+        Event.fireEvent(mascotDock, doubleClick());
+        assertTrue(isShowingStage(".main-menu"), "Mascot double-click always opens main navigation");
+        ((Button) ((HBox) menuRoot.lookup(".main-menu")).getChildren().get(3)).fire();
+        more = (VBox) menuRoot.lookup(".more-menu");
+        ((Button) more.getChildren().get(4)).fire();
+        VBox about = (VBox) menuRoot.lookup(".more-menu");
+        Event.fireEvent(menuRoot, escape());
+        assertTrue(menuStage.isShowing());
+        closeActivePanel(menuStage, 0);
+        Event.fireEvent(mascotDock, doubleClick());
+        assertTrue(isShowingStage(".main-menu"), "A collapsed submenu must not block access to main navigation");
+        ((Button) ((HBox) menuRoot.lookup(".main-menu")).getChildren().get(3)).fire();
+        closeActivePanel(menuStage, 1);
+        Event.fireEvent(mascotDock, doubleClick());
+        assertTrue(isShowingStage(".main-menu"), "Explicit X close should return to main navigation on next open");
+        Event.fireEvent(menuStage, new javafx.stage.WindowEvent(menuStage,
+                javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST));
+        assertFalse(menuStage.isShowing());
+        Event.fireEvent(mascotDock, doubleClick());
+        assertTrue(menuStage.isShowing(), "An OS close request must not strand a hidden navigation stage");
     }
 
     private static void assertMoreInstructionsWork(Stage settingsStage, ServiceRegistry services) {
@@ -631,7 +755,8 @@ class FxmlLayoutTest {
                 .filter(Button.class::isInstance)
                 .map(Button.class::cast)
                 .toList();
-        windowButtons.get(buttonIndex).fire();
+        windowButtons.stream().filter(button -> button.getText().equals(buttonIndex == 0 ? "_" : "X"))
+                .findFirst().orElseThrow().fire();
         assertFalse(panelStage.isShowing(), "Closing a panel should return to the mascot");
     }
 }

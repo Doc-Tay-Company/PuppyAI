@@ -1864,6 +1864,14 @@ public class ChatController {
         }
     }
 
+    public boolean isResponding() {
+        return responding;
+    }
+
+    public MascotState activityState() {
+        return streamingBubble == null ? MascotState.THINKING : MascotState.TALKING;
+    }
+
     public void prepareToQuit() {
         close();
         preparingToQuit = true;
