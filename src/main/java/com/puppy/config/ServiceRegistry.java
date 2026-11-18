@@ -1,7 +1,14 @@
 package com.puppy.config;
 
 import com.puppy.document.DocumentTextExtractor;
+import com.puppy.database.Database;
+import com.puppy.repository.ChatRepository;
+import com.puppy.repository.FocusRepository;
+import com.puppy.repository.QuizRepository;
+import com.puppy.repository.SettingsRepository;
 import com.puppy.service.AiFocusPlanExtractor;
+import com.puppy.service.AppSettingsService;
+import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
 import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
@@ -29,6 +36,10 @@ public final class ServiceRegistry implements AutoCloseable {
     private final ModelService modelService;
     private final ChatService chatService;
     private final FocusService focusService;
+    private final Database database;
+    private final ChatHistoryService chatHistory;
+    private final AppSettingsService appSettings;
+    private final QuizRepository quizzes;
 
     private boolean started;
     private boolean closed;
@@ -37,12 +48,23 @@ public final class ServiceRegistry implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.threadManager = new ThreadManager(config.appName());
         this.mascotStateService = new DefaultMascotStateService();
-        this.modelService = new ModelService(config, new AiSettingsStore(config.dataDirectory()));
-        DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
-        this.chatService = new ChatService(modelService, documentTextExtractor);
-        this.focusService = new FocusService(
-                new AiFocusPlanExtractor(modelService, Clock.systemDefaultZone()),
-                documentTextExtractor);
+        this.database = Database.open(config.dataDirectory());
+        try {
+            var settings = new SettingsRepository(database);
+            this.appSettings = new AppSettingsService(config, settings);
+            this.modelService = new ModelService(config, new AiSettingsStore(config.dataDirectory(), settings));
+            this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
+            this.quizzes = new QuizRepository(database);
+            DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
+            this.chatService = new ChatService(modelService, documentTextExtractor);
+            this.focusService = new FocusService(
+                    new AiFocusPlanExtractor(modelService, Clock.systemDefaultZone()),
+                    documentTextExtractor, new FocusRepository(database));
+        } catch (RuntimeException e) {
+            database.close();
+            threadManager.close();
+            throw e;
+        }
     }
 
     /** Initializes the services that need explicit startup. Safe to call once. */
@@ -51,7 +73,6 @@ public final class ServiceRegistry implements AutoCloseable {
             return;
         }
         started = true;
-        // Later milestones: database connection, repositories.
     }
 
     public boolean isStarted() {
@@ -76,7 +97,7 @@ public final class ServiceRegistry implements AutoCloseable {
         return chatService;
     }
 
-    /** In-memory Focus planner shared by the Focus panel and the chat focus option. */
+    /** Persisted Focus planner shared by the panel and chat. */
     public FocusService focusService() {
         return focusService;
     }
@@ -84,6 +105,10 @@ public final class ServiceRegistry implements AutoCloseable {
     public ThreadManager threadManager() {
         return threadManager;
     }
+
+    public ChatHistoryService chatHistory() { return chatHistory; }
+    public AppSettingsService appSettings() { return appSettings; }
+    public QuizRepository quizzes() { return quizzes; }
 
     /** Releases every service; called from {@code Application.stop()}. */
     @Override
@@ -94,5 +119,7 @@ public final class ServiceRegistry implements AutoCloseable {
         closed = true;
         started = false;
         threadManager.close();
+        chatHistory.close();
+        database.close();
     }
 }

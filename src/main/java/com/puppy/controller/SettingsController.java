@@ -81,6 +81,51 @@ public class SettingsController {
     private Runnable menuAction;
     private Runnable layoutChanged;
     private boolean refreshingModelChoice;
+    private java.util.concurrent.ExecutorService executor;
+    private com.puppy.service.AppSettingsService appSettings;
+
+    public void attachPersistence(java.util.concurrent.ExecutorService executor,
+                                  com.puppy.service.AppSettingsService appSettings) {
+        this.executor = executor;
+        this.appSettings = appSettings;
+    }
+
+    @FunctionalInterface
+    private interface SettingsAction { void run() throws IOException; }
+
+    private void saveSetting(SettingsAction action, Runnable success) {
+        Runnable work = () -> {
+            try {
+                action.run();
+                runOnUi(success);
+            } catch (IOException | RuntimeException e) {
+                runOnUi(() -> {
+                    refreshAiSection();
+                    if (appSettings != null) {
+                        alwaysOnTopCheck.setSelected(appSettings.alwaysOnTop());
+                    }
+                    showStatus("Setting was not saved. Check local storage access and retry.", true);
+                });
+            }
+        };
+        if (executor == null) {
+            work.run();
+        } else {
+            try {
+                executor.submit(work);
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                showStatus("The application is shutting down; the setting was not changed.", true);
+            }
+        }
+    }
+
+    private void runOnUi(Runnable action) {
+        if (javafx.application.Platform.isFxApplicationThread()) {
+            action.run();
+        } else {
+            javafx.application.Platform.runLater(action);
+        }
+    }
 
     public void attach(String appVersion, ModelService modelService, boolean alwaysOnTop,
                        Consumer<Boolean> alwaysOnTopChanged,
@@ -217,8 +262,7 @@ public class SettingsController {
         if (chosen == null) {
             return;
         }
-        try {
-            modelService.selectModel(chosen.id());
+        saveSetting(() -> modelService.selectModel(chosen.id()), () -> {
             refreshAiSection();
             if (chosen.cloud() && !modelService.hasOpenRouterKey()) {
                 showStatus("Selected " + chosen.displayName()
@@ -227,12 +271,7 @@ public class SettingsController {
                 showStatus("Now using " + chosen.displayName()
                         + " (" + chosen.locationLabel() + ").", false);
             }
-        } catch (IOException e) {
-            showStatus("Puppy couldn't save the model choice. Check access to its local data folder.",
-                    true);
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            showStatus(e.getMessage(), true);
-        }
+        });
     }
 
     @FXML
@@ -240,16 +279,12 @@ public class SettingsController {
         if (modelService == null || !modelService.canEditOpenRouterKey()) {
             return;
         }
-        try {
-            modelService.saveOpenRouterKey(openRouterKeyField.getText());
+        String key = openRouterKeyField.getText();
+        saveSetting(() -> modelService.saveOpenRouterKey(key), () -> {
             openRouterKeyField.clear();
             refreshAiSection();
             showStatus("OpenRouter API key saved.", false);
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            showStatus(e.getMessage(), true);
-        } catch (IOException e) {
-            showStatus("Puppy couldn't save the key. Check access to its local data folder.", true);
-        }
+        });
     }
 
     @FXML
@@ -257,22 +292,22 @@ public class SettingsController {
         if (modelService == null || !modelService.canEditOpenRouterKey()) {
             return;
         }
-        try {
-            modelService.clearOpenRouterKey();
+        saveSetting(modelService::clearOpenRouterKey, () -> {
             openRouterKeyField.clear();
             refreshAiSection();
             showStatus("OpenRouter key removed. Add a new key or choose the local model.",
                     false);
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            showStatus(e.getMessage(), true);
-        } catch (IOException e) {
-            showStatus("Puppy couldn't remove the key. Check access to its local data folder.", true);
-        }
+        });
     }
 
     @FXML
     private void onAlwaysOnTopChanged() {
-        alwaysOnTopChanged.accept(alwaysOnTopCheck.isSelected());
+        boolean value = alwaysOnTopCheck.isSelected();
+        saveSetting(() -> {
+            if (appSettings != null) {
+                appSettings.setAlwaysOnTop(value);
+            }
+        }, () -> alwaysOnTopChanged.accept(value));
     }
 
     @FXML

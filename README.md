@@ -6,9 +6,9 @@ services in a single desktop process — no Python, no separate server.
 
 **Implementation roadmap and status:** [Implementation Status](docs/IMPLEMENTATION_STATUS.md)
 is the single source of truth for scope, decisions, dependencies and acceptance
-criteria. The next planned features are SQLite persistence, supplemental chat
-instructions in Settings, and interactive **Multiple Quiz** inside Chat. These
-features are not implemented yet; the behavior below describes the current app.
+criteria. SQLite persistence is implemented. Supplemental chat instructions in
+Settings and interactive **Multiple Quiz** inside Chat remain planned; only the
+quiz-definition storage foundation exists so far.
 
 **Status: local and cloud AI chat plus Focus planning are wired up.** The app
 launches as a frameless, transparent, always-on-top puppy. The mascot stays in
@@ -24,7 +24,7 @@ pinned timetable or subject file, or a typed subject description, infers Quick
 or Deep focus from how you describe the subject, asks for your free-time window
 when it is missing, and builds a constraint-aware study plan while the Focus
 Planner panel supports hand-made classes, tasks and sessions. Chat, focus data
-and attachments are session-only; cloud models need an internet connection and an
+and extracted attachments persist locally; cloud models need an internet connection and an
 OpenRouter key.
 
 ## Requirements
@@ -61,7 +61,8 @@ reveals an **OpenRouter API key** section directly below the model picker; the
 local model keeps its name and never asks for a key. With no saved choice, a
 configured key defaults to **Gemini 2.5 Flash**. Choosing the local model keeps
 chat on this machine. The choice is saved in
-`%LOCALAPPDATA%\PuppyAI\ai.properties` (or the platform equivalent).
+`%LOCALAPPDATA%\PuppyAI\puppy.db` (or the platform equivalent). The old
+`ai.properties` model choice is imported once; that legacy file is left untouched.
 
 To add a key:
 
@@ -157,6 +158,42 @@ mvn javafx:run        # launch Puppy
 There is deliberately no title bar, so use **More → Quit Puppy** (or the
 right-click development menu) to exit.
 
+## Local database and privacy
+
+Puppy uses embedded SQLite through JDBC; no database server is required.
+`puppy.db` lives in `%LOCALAPPDATA%\PuppyAI` (or
+`~/.local/share/PuppyAI`). Override the directory with
+`-Dpuppy.dataDirectory=C:\path\to\data` or `PUPPY_DATA_DIRECTORY`.
+Use a local disk. Only one running Puppy instance can own a data directory.
+
+- Chat messages, reply timings, conversation attachments, Focus data/completion,
+  model choice and always-on-top survive restart. The last active chat reopens;
+  history is ordered by recent activity. Greeting-only empty chats are not saved.
+- New chats receive a provisional title, then one additional AI request asks the
+  selected model to paraphrase the first request. It does not include attachments.
+  Cloud titles may incur provider charges. Failure retains the provisional title
+  and shows a nonblocking warning.
+- Attachments store extracted text and filename/page/truncation metadata, never
+  original file copies or absolute paths. Moving the original does not break
+  restored context. Removing a chip deletes its stored text from that chat,
+  while old message filename labels remain.
+- Local chat/document data is **not encrypted**. Credentials remain in the
+  separate `ai-secrets.properties` file; no `.env` migration is performed.
+  External environment/system-property API keys retain precedence.
+- Failed chat saves retain content in memory and expose **Retry save**. A user
+  request must save before AI generation starts. Interrupted replies are labelled;
+  forced termination may lose tokens since the last saved snapshot. Quit drains
+  writes and offers retry or explicit quit-without-saving on failure.
+- Database startup/migration failures block normal startup rather than silently
+  replacing existing data. Upgrades keep one consistent pre-upgrade backup,
+  `puppy.pre-upgrade.db`; recovery is manual. Newer schemas require a newer app.
+- Deletion uses SQLite `secure_delete` with rollback journaling. This is best
+  effort, **not a physical-erasure guarantee** on SSDs, filesystem snapshots or
+  backups. Protect the data directory and any copies yourself.
+- Focus countdowns are not restored. Quiz storage saves definitions only, never
+  learner attempts, answers, progress or scores; quiz generation/UI is not yet
+  implemented. New history-management/search/export UI is deferred.
+
 ## Mascot states
 
 | State | Frames | Purpose |
@@ -196,8 +233,8 @@ JavaFX presentation   controllers, FXML, CSS, sprite rendering
         │  Java interfaces / method calls
 Application services  ChatService, ModelService, FocusService, MascotStateService
         │
-Infrastructure        Ollama and OpenRouter HTTP clients, document extraction,
-                      local settings/key storage, configuration, thread pool
+Infrastructure        SQLite/JDBC repositories, Ollama and OpenRouter HTTP clients,
+                      document extraction, local key storage, configuration, thread pool
 ```
 
 | Component | Current implementation |
@@ -205,7 +242,9 @@ Infrastructure        Ollama and OpenRouter HTTP clients, document extraction,
 | `PuppyApplication` | JavaFX entry point, builds the transparent always-on-top stage |
 | `ServiceRegistry` | Creates and shuts down application services, including `ModelService` |
 | `AppConfig` | App name, version, always-on-top flag, data directory, Ollama URL/model, optional OpenRouter environment key and endpoint |
-| `AiSettingsStore` | Local model choice and OpenRouter key in `%LOCALAPPDATA%\PuppyAI`, with owner-only permissions where supported |
+| `AiSettingsStore` | SQLite-backed model choice with one-time legacy import; separate local OpenRouter secret file |
+| `Database` / repositories | Locked per-user SQLite database, serialized JDBC work, transactional storage and schema upgrades |
+| `ChatHistoryService` / `AppSettingsService` | Durable chat snapshots/retry and committed desktop preferences |
 | `MascotController` | Fixed mascot window, separate menu/panel windows, mascot interactions and timers |
 | `MascotAnimator` | Frame timing and per-state image switching |
 | `MascotSprites` | Ordered frame resources and per-state animation metadata |
@@ -214,7 +253,7 @@ Infrastructure        Ollama and OpenRouter HTTP clients, document extraction,
 | `MascotStateService` | Thread-safe current state with listener notifications |
 | `ChatService` | Builds the bounded prompt and streams replies from the selected model |
 | `ModelService` | Cloud-first model selection, runtime switching, key state and provider routing |
-| `FocusService` | Owns in-memory classes, tasks, preferences, the current plan and manual-session validation |
+| `FocusService` | Owns restored classes, tasks, preferences, current plan and manual-session validation; mutations persist before publication |
 | `FocusPlanner` | Deterministic scheduling: classes, free time, deadlines, subject fairness, breaks and block sizes |
 | `FocusPlanExtractor` | Reads timetable/task files; `AiFocusPlanExtractor` asks the selected model for strict JSON |
 | `ChatProvider` | Provider-neutral contract for streaming chat and JSON mode |
@@ -248,15 +287,19 @@ src/main/java/com/puppy/
 ├── config/       AiSettingsStore, AppConfig, ServiceRegistry
 ├── controller/   MascotController, ChatController, StudyController,
 │                 FocusController, SettingsController
+├── database/     Database, PersistenceException
 ├── document/     DocumentTextExtractor, DocumentExtractionException
 ├── enums/        MascotState, FocusType, Priority, AIMode, MessageRole
 ├── model/        ChatMessage, DocumentAttachment, ClassSlot, StudyTask,
 │                 FocusPreferences, FocusSession, FocusPlan, FocusPlannerInput,
-│                 FocusExtraction
+│                 FocusExtraction, FocusState, StoredConversation, StoredMessage,
+│                 QuizDefinition
+├── repository/   SettingsRepository, ChatRepository, FocusRepository, QuizRepository
 ├── service/      ChatService, ChatPromptBuilder, ModelService, FocusService,
 │                 FocusPlanner, FocusPlanExtractor, AiFocusPlanExtractor,
 │                 FocusJsonParser, FocusFormats, MascotStateService,
-│                 DefaultMascotStateService, StudyTimer, MockChatResponder
+│                 DefaultMascotStateService, StudyTimer, MockChatResponder,
+│                 ChatHistoryService, AppSettingsService
 ├── ui/           MascotAnimator, MascotSprites, MascotMessages, MarkdownRenderer
 └── util/         ThreadManager
 src/main/resources/
@@ -266,26 +309,28 @@ src/main/resources/
 └── sprites/      state folders with numbered PNG frames
 src/test/java/com/puppy/
 ├── ai/           OpenRouterClientTest, OllamaClientTest
-├── config/       AiSettingsStoreTest
-├── controller/   FxmlLayoutTest
+├── config/       AiSettingsStoreTest, DatabaseSettingsTest
+├── controller/   FxmlLayoutTest, FocusControllerWorkerTest
+├── database/     DatabaseTest
 ├── document/     DocumentTextExtractorTest
 ├── service/      ChatPromptBuilderTest, ChatServiceTest, ModelServiceTest,
 │                 FocusPlannerTest, FocusJsonParserTest, FocusServiceTest,
 │                 DefaultMascotStateServiceTest, StudyTimerTest,
-│                 MockChatResponderTest
+│                 MockChatResponderTest, FocusPersistenceTest
+├── repository/   ChatRepositoryTest, QuizRepositoryTest
 ├── ui/           MascotSpritesTest, MascotMessagesTest
 └── util/         DurationFormatsTest
 ```
 
-Planned persistence packages (`repository/`, `database/`) are tracked in the
-[implementation status](docs/IMPLEMENTATION_STATUS.md). Web research is outside
-the current feature scope.
+Persistence packages (`repository/`, `database/`) implement the storage tracked
+in the [implementation status](docs/IMPLEMENTATION_STATUS.md). Web research is
+outside the current feature scope.
 
 ## Focus mode
 
 Focus has two entry points: the **Focus plan** composer option in Chat with
 pinned files or a typed subject description, and the Focus Planner panel from
-the main menu or More. Both share one in-memory `FocusService`, so a plan built
+the main menu or More. Both share one persisted `FocusService`, so a plan built
 in chat is immediately visible in the panel.
 
 ### How a plan is built
@@ -363,9 +408,9 @@ it is not shown or chosen in the UI.
 - Sessions support Start / Pause / Resume, a live countdown, Finish / Done and
   Remove. A running Focus timer keeps the mascot awake.
 
-Focus data is session-only. **Generate plan** rebuilds the scheduled session
+Focus data survives restart. **Generate plan** rebuilds the scheduled session
 list from the current classes and tasks; hand-made sessions are not carried into
-a new generation. Persistence is planned with the SQLite milestone.
+a new generation. Restart preserves past sessions/completion but never resumes a countdown.
 
 ## Chat, attachments and model switching
 
@@ -401,12 +446,12 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
 - **Attachments** use the 📌 pin button and read PDF, DOCX, legacy DOC, TXT and
   Markdown files locally. Text is extracted with PDFBox/Apache POI, capped at
   20 MB and 80,000 characters per file, and only the extracted text is kept in
-  memory. When a cloud model is selected, that extracted text is sent to
+  local storage. When a cloud model is selected, that extracted text is sent to
   OpenRouter and its model provider with the prompt; the local model keeps it on
   this computer.
 - Up to five documents can be attached to a conversation. Their context stays
-  with that conversation until the app exits; remove a chip or start a new chat
-  to drop it. The prompt builder caps document context and recent history so a
+  with that conversation across restarts; removing a chip drops its context from
+  that chat. A new chat starts with no attachments. The prompt builder caps document context and recent history so a
   large file cannot overflow the model's context window.
 - **Errors** stay friendly: Ollama not running, local model missing (with the
   `ollama pull` command), a missing or rejected OpenRouter key, credits,
@@ -425,8 +470,8 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
 - **More** offers Focus Planner, Settings, session chat history, Help / About,
   collapse-to-mascot and Quit.
 
-Chat history, attachments and focus data are session-only; the model choice and
-OpenRouter key are stored locally. A true hide-to-tray option is deferred;
+Chat history, extracted attachments, Focus data, model choice and desktop settings
+persist in SQLite; the OpenRouter key remains a separate local file. A true hide-to-tray option is deferred;
 “Hide/show” safely collapses the expanded shell to the mascot.
 
 `StudyTimer` remains pure Java; `StudyController` owns the JavaFX ticker and
@@ -461,9 +506,9 @@ read it yet.
 | Clean exit | `Application.stop()` → `ServiceRegistry.close()` |
 
 Known limitations: JavaFX receives mouse input across the full window rectangle,
-including transparent pixels. Chat history, attachments and focus plans are
-session-only; the model choice and OpenRouter key persist locally, but broad
-application settings, a system tray and true hide/show behavior are future work.
+including transparent pixels. Chat history, extracted attachments, Focus plans,
+model choice and always-on-top persist locally. A system tray, custom instructions
+editor and true hide/show behavior are future work.
 Focus extraction uses the selected model, so cloud extraction needs a working
 key and internet connection while local extraction needs Ollama running. Combined
 document context is capped at 24,000 characters, and the planner defaults to a

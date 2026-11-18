@@ -32,6 +32,8 @@ public final class AiSettingsStore {
     private final Path dataDirectory;
     private final Path settingsFile;
     private final Path secretsFile;
+    private com.puppy.repository.SettingsRepository repository;
+    private Optional<String> selectedModel;
 
     public AiSettingsStore(Path dataDirectory) {
         this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory")
@@ -39,6 +41,25 @@ public final class AiSettingsStore {
                 .normalize();
         this.settingsFile = this.dataDirectory.resolve(SETTINGS_FILE);
         this.secretsFile = this.dataDirectory.resolve(SECRETS_FILE);
+    }
+
+    public AiSettingsStore(Path dataDirectory, com.puppy.repository.SettingsRepository repository) {
+        this(dataDirectory);
+        this.repository = Objects.requireNonNull(repository, "repository");
+        if (repository.get("legacyModelImported").isEmpty()) {
+            Properties legacy = new Properties();
+            if (Files.exists(settingsFile)) {
+                try (InputStream input = Files.newInputStream(settingsFile)) {
+                    legacy.load(input);
+                } catch (IOException | IllegalArgumentException e) {
+                    throw new com.puppy.database.PersistenceException(
+                            "Cannot import the old model setting. Repair ai.properties and retry; it was not changed.", e);
+                }
+            }
+            String model = legacy.getProperty(SELECTED_MODEL_KEY);
+            repository.importLegacyModel(model);
+        }
+        selectedModel = repository.get(SELECTED_MODEL_KEY);
     }
 
     public Path dataDirectory() {
@@ -51,6 +72,9 @@ public final class AiSettingsStore {
 
     /** The model the user explicitly chose, if the model no longer exists this is ignored. */
     public Optional<String> selectedModelId() {
+        if (repository != null) {
+            return selectedModel;
+        }
         return Optional.ofNullable(read(settingsFile).getProperty(SELECTED_MODEL_KEY))
                 .map(String::strip)
                 .filter(value -> !value.isEmpty());
@@ -61,7 +85,12 @@ public final class AiSettingsStore {
         if (cleaned.isEmpty()) {
             throw new IllegalArgumentException("A model must be selected");
         }
-        writeProperty(settingsFile, SELECTED_MODEL_KEY, cleaned);
+        if (repository == null) {
+            writeProperty(settingsFile, SELECTED_MODEL_KEY, cleaned);
+        } else {
+            repository.put(SELECTED_MODEL_KEY, cleaned);
+            selectedModel = Optional.of(cleaned);
+        }
     }
 
     /** Returns the stored OpenRouter key, never the environment key. */

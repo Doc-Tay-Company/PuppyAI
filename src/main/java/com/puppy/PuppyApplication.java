@@ -32,6 +32,7 @@ public final class PuppyApplication extends Application {
 
     private ServiceRegistry services;
     private MascotController controller;
+    private RuntimeException startupFailure;
 
     public static void main(String[] args) {
         launch(args);
@@ -39,12 +40,25 @@ public final class PuppyApplication extends Application {
 
     @Override
     public void init() {
-        services = new ServiceRegistry(AppConfig.load());
-        services.start();
+        try {
+            services = new ServiceRegistry(AppConfig.load());
+            services.start();
+        } catch (RuntimeException e) {
+            startupFailure = e;
+        }
     }
 
     @Override
     public void start(Stage stage) throws Exception {
+        if (startupFailure != null) {
+            var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
+            alert.setTitle("Puppy storage unavailable");
+            alert.setHeaderText("Puppy could not open local storage.");
+            alert.setContentText(startupFailure.getMessage());
+            alert.showAndWait();
+            javafx.application.Platform.exit();
+            return;
+        }
         FXMLLoader loader = new FXMLLoader(PuppyApplication.class.getResource("/fxml/shell.fxml"));
         Parent root = loader.load();
         controller = loader.getController();
@@ -57,7 +71,7 @@ public final class PuppyApplication extends Application {
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setTitle(services.config().appName());
         stage.setResizable(false);
-        stage.setAlwaysOnTop(services.config().alwaysOnTop());
+        stage.setAlwaysOnTop(services.appSettings().alwaysOnTop());
         Image icon = loadIcon();
         if (icon != null) {
             stage.getIcons().add(icon);
@@ -65,6 +79,10 @@ public final class PuppyApplication extends Application {
         stage.setScene(scene);
 
         controller.attach(stage, services);
+        stage.setOnCloseRequest(event -> {
+            event.consume();
+            controller.requestQuit();
+        });
 
         positionInScreenCorner(stage);
         stage.show();
@@ -76,7 +94,8 @@ public final class PuppyApplication extends Application {
             controller.close();
         }
         if (services != null) {
-            services.close();
+            Thread shutdown = new Thread(services::close, "puppy-shutdown");
+            shutdown.start();
         }
     }
 

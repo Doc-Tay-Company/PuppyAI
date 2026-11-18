@@ -169,12 +169,12 @@ public final class ModelService {
                         "The OpenRouter key comes from your environment and can't be removed here.");
             }
             AiModel current = selectedModel;
-            store.clearOpenRouterApiKey();
             // Keep a cloud model selected so Settings can collect a new key. A
             // model that was only the startup default has no saved id yet.
             if (current.cloud() && store.selectedModelId().isEmpty()) {
                 store.saveSelectedModelId(current.id());
             }
+            store.clearOpenRouterApiKey();
             refreshLocked();
         }
     }

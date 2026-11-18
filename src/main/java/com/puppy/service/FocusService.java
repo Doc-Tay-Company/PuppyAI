@@ -11,7 +11,9 @@ import com.puppy.model.FocusPlan;
 import com.puppy.model.FocusPlannerInput;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
+import com.puppy.model.FocusState;
 import com.puppy.model.StudyTask;
+import com.puppy.repository.FocusRepository;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -21,18 +23,20 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Application service for the Focus planner. It owns the in-memory classes,
  * tasks, preferences and current plan, and is the only place the UI asks for
  * scheduling changes.
  *
- * <p>Document reading and model extraction may block, so callers run
- * {@link #importFromFiles(List, FocusType)} on a worker thread. Planning itself
- * is cheap and deterministic.</p>
+ * <p>Construction with a repository and all durable mutations must run on a
+ * worker thread. Getters expose only committed state.</p>
  */
 public final class FocusService {
 
@@ -43,6 +47,9 @@ public final class FocusService {
     private final DocumentTextExtractor documentTextExtractor;
     private final FocusPlanner planner = new FocusPlanner();
     private final Clock clock;
+    private final FocusRepository repository;
+    private final Map<ClassSlot, String> classIds = new LinkedHashMap<>();
+    private final Map<StudyTask, String> taskIds = new LinkedHashMap<>();
 
     private final List<ClassSlot> classes = new ArrayList<>();
     private final List<StudyTask> tasks = new ArrayList<>();
@@ -56,12 +63,28 @@ public final class FocusService {
     public FocusService(FocusPlanExtractor extractor,
                         DocumentTextExtractor documentTextExtractor,
                         Clock clock) {
+        this(extractor, documentTextExtractor, clock, null);
+    }
+
+    public FocusService(FocusPlanExtractor extractor,
+                        DocumentTextExtractor documentTextExtractor,
+                        FocusRepository repository) {
+        this(extractor, documentTextExtractor, Clock.systemDefaultZone(), repository);
+    }
+
+    public FocusService(FocusPlanExtractor extractor,
+                        DocumentTextExtractor documentTextExtractor,
+                        Clock clock, FocusRepository repository) {
         this.extractor = Objects.requireNonNull(extractor, "extractor");
         this.documentTextExtractor = Objects.requireNonNull(
                 documentTextExtractor, "documentTextExtractor");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.repository = repository;
         this.plan = FocusPlan.empty(today(),
                 "Import your timetable or add tasks, then press Generate plan.");
+        if (repository != null) {
+            repository.load().ifPresent(this::restore);
+        }
     }
 
     /**
@@ -102,14 +125,20 @@ public final class FocusService {
         List<String> notes = new ArrayList<>(extraction.notes());
 
         synchronized (this) {
-            mergeClasses(extraction.input().classes());
-            mergeTasks(extraction.input().tasks());
-            addReviewTasksIfNeeded(notes);
-            if (override != null) {
-                tasks.replaceAll(task -> task.withType(override));
-            }
-            plan = buildPlan(notes);
-            return plan;
+            return mutate(() -> {
+                mergeClasses(extraction.input().classes());
+                mergeTasks(extraction.input().tasks());
+                addReviewTasksIfNeeded(notes);
+                if (override != null) {
+                    for (StudyTask task : tasks) {
+                        taskIds.putIfAbsent(task.withType(override),
+                                taskIds.getOrDefault(task, UUID.randomUUID().toString()));
+                    }
+                    tasks.replaceAll(task -> task.withType(override));
+                }
+                plan = buildPlan(notes);
+                return plan;
+            });
         }
     }
 
@@ -125,8 +154,10 @@ public final class FocusService {
 
     /** Rebuilds the plan from the classes, tasks and preferences already loaded. */
     public synchronized FocusPlan generatePlan() {
-        plan = buildPlan(List.of());
-        return plan;
+        return mutate(() -> {
+            plan = buildPlan(List.of());
+            return plan;
+        });
     }
 
     public synchronized FocusPlan currentPlan() {
@@ -150,29 +181,35 @@ public final class FocusService {
     }
 
     public synchronized void setPreferences(FocusPreferences newPreferences) {
-        preferences = Objects.requireNonNull(newPreferences, "newPreferences");
+        mutate(() -> preferences = Objects.requireNonNull(newPreferences, "newPreferences"));
     }
 
     public synchronized void addClass(ClassSlot classSlot) {
         Objects.requireNonNull(classSlot, "classSlot");
-        if (!classes.contains(classSlot)) {
-            classes.add(classSlot);
-        }
+        mutate(() -> {
+            if (!classes.contains(classSlot)) {
+                classes.add(classSlot);
+            }
+            return null;
+        });
     }
 
     public synchronized void removeClass(ClassSlot classSlot) {
-        classes.remove(classSlot);
+        mutate(() -> classes.remove(classSlot));
     }
 
     public synchronized void addTask(StudyTask task) {
         Objects.requireNonNull(task, "task");
-        if (!tasks.contains(task)) {
-            tasks.add(task);
-        }
+        mutate(() -> {
+            if (!tasks.contains(task)) {
+                tasks.add(task);
+            }
+            return null;
+        });
     }
 
     public synchronized void removeTask(StudyTask task) {
-        tasks.remove(task);
+        mutate(() -> tasks.remove(task));
     }
 
     /**
@@ -185,7 +222,7 @@ public final class FocusService {
         List<FocusSession> updated = new ArrayList<>(plan.sessions());
         updated.add(session);
         updated.sort(sessionOrder());
-        plan = new FocusPlan(updated, plan.warnings(), plan.generatedOn());
+        mutate(() -> plan = new FocusPlan(updated, plan.warnings(), plan.generatedOn()));
         return session;
     }
 
@@ -215,7 +252,7 @@ public final class FocusService {
                 : updated;
         sessions.set(index, merged);
         sessions.sort(sessionOrder());
-        plan = new FocusPlan(sessions, plan.warnings(), plan.generatedOn());
+        mutate(() -> plan = new FocusPlan(sessions, plan.warnings(), plan.generatedOn()));
         return merged;
     }
 
@@ -226,7 +263,7 @@ public final class FocusService {
             if (session.id().equals(id)) {
                 FocusSession completed = session.asCompleted();
                 updated.set(i, completed);
-                plan = new FocusPlan(updated, plan.warnings(), plan.generatedOn());
+                mutate(() -> plan = new FocusPlan(updated, plan.warnings(), plan.generatedOn()));
                 return completed;
             }
         }
@@ -234,15 +271,57 @@ public final class FocusService {
     }
 
     public synchronized void removeSession(String id) {
-        plan = new FocusPlan(
+        mutate(() -> plan = new FocusPlan(
                 plan.sessions().stream().filter(session -> !session.id().equals(id)).toList(),
                 plan.warnings(),
-                plan.generatedOn());
+                plan.generatedOn()));
     }
 
     public synchronized void clearSessions() {
-        plan = new FocusPlan(List.of(), List.of("The session list is empty. "
-                + "Press Generate plan to rebuild it."), plan.generatedOn());
+        mutate(() -> plan = new FocusPlan(List.of(), List.of("The session list is empty. "
+                + "Press Generate plan to rebuild it."), plan.generatedOn()));
+    }
+
+    private <T> T mutate(Supplier<T> mutation) {
+        FocusState before = snapshot();
+        try {
+            T result = mutation.get();
+            FocusState after = snapshot();
+            if (repository != null) {
+                repository.save(after);
+            }
+            return result;
+        } catch (RuntimeException e) {
+            restore(before);
+            throw e;
+        }
+    }
+
+    private FocusState snapshot() {
+        classIds.keySet().retainAll(classes);
+        taskIds.keySet().retainAll(tasks);
+        return new FocusState(classes.stream().map(value -> new FocusState.ClassEntry(
+                classIds.computeIfAbsent(value, key -> UUID.randomUUID().toString()), value)).toList(),
+                tasks.stream().map(value -> new FocusState.TaskEntry(
+                        taskIds.computeIfAbsent(value, key -> UUID.randomUUID().toString()), value)).toList(),
+                preferences, plan);
+    }
+
+    private void restore(FocusState state) {
+        classes.clear();
+        tasks.clear();
+        classIds.clear();
+        taskIds.clear();
+        state.classes().forEach(entry -> {
+            classes.add(entry.value());
+            classIds.put(entry.value(), entry.id());
+        });
+        state.tasks().forEach(entry -> {
+            tasks.add(entry.value());
+            taskIds.put(entry.value(), entry.id());
+        });
+        preferences = state.preferences();
+        plan = state.plan();
     }
 
     /** True when a class or a scheduled session already covers this time. */

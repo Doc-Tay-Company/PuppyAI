@@ -49,6 +49,9 @@ public final class ThreadManager implements AutoCloseable {
         try {
             if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 executor.shutdownNow();
+                while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                    // Storage stays open until interrupted workers finish their accepted writes.
+                }
             }
         } catch (InterruptedException e) {
             executor.shutdownNow();

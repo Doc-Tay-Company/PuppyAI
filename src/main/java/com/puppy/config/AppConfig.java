@@ -107,6 +107,13 @@ public record AppConfig(
     }
 
     private static Path defaultDataDirectory() {
+        String override = read("dataDirectory");
+        if (override == null) {
+            override = System.getenv("PUPPY_DATA_DIRECTORY");
+        }
+        if (override != null && !override.isBlank()) {
+            return Path.of(override).toAbsolutePath().normalize();
+        }
         String localAppData = System.getenv("LOCALAPPDATA");
         Path base = (localAppData != null && !localAppData.isBlank())
                 ? Path.of(localAppData)
@@ -117,6 +124,10 @@ public record AppConfig(
     private static boolean readBoolean(String key, boolean defaultValue) {
         String value = read(key);
         return value == null ? defaultValue : Boolean.parseBoolean(value);
+    }
+
+    public static boolean hasAlwaysOnTopOverride() {
+        return read("alwaysOnTop") != null;
     }
 
     private static String read(String key) {

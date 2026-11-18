@@ -9,6 +9,9 @@ import com.puppy.model.DocumentAttachment;
 import com.puppy.model.FocusPlan;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
+import com.puppy.model.StoredMessage;
+import com.puppy.model.StoredConversation;
+import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
 import com.puppy.service.FocusFormats;
 import com.puppy.service.FocusPlanningException;
@@ -63,8 +66,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Replies stream from {@link ChatService} on the shared worker pool. All
  * JavaFX updates are marshalled back with {@link Platform#runLater}. The panel
- * also keeps a small session-only history and reads PDF/Word attachments into
- * the current conversation context.</p>
+ * presents durable history through {@link ChatHistoryService} and reads PDF/Word
+ * attachments into the current conversation context.</p>
  */
 public class ChatController {
 
@@ -142,6 +145,12 @@ public class ChatController {
     private Label attachmentStatus;
 
     @FXML
+    private Label saveStatus;
+
+    @FXML
+    private Button retrySaveButton;
+
+    @FXML
     private ImageView chatMascotView;
 
     private final List<Conversation> history = new ArrayList<>();
@@ -165,6 +174,14 @@ public class ChatController {
     private int attachmentGeneration;
     private Future<?> inFlight;
     private PendingFocus pendingFocus;
+    private FocusPreferences pendingPreferences;
+    private ChatHistoryService chatHistory;
+    private String currentConversationId = java.util.UUID.randomUUID().toString();
+    private final java.util.Set<String> titleRequested = new java.util.HashSet<>();
+    private boolean restoring;
+    private boolean preparingToQuit;
+    private java.util.concurrent.CompletableFuture<Void> latestSave =
+            java.util.concurrent.CompletableFuture.completedFuture(null);
 
     private final StringBuilder pendingTokens = new StringBuilder();
     private final StringBuilder streamingText = new StringBuilder();
@@ -292,6 +309,12 @@ public class ChatController {
                 .toList();
 
         addMessage("user", message, fileNames);
+        Message placeholder = new Message(java.util.UUID.randomUUID().toString(), "assistant", "",
+                List.of(), 0L, StoredMessage.Status.GENERATING);
+        currentMessages.add(placeholder);
+        streamingMessageIndex = currentMessages.size() - 1;
+        updateSelectedConversation();
+        java.util.concurrent.CompletableFuture<Void> savedRequest = latestSave;
         responding = true;
         thinkingLabel.setManaged(true);
         thinkingLabel.setVisible(true);
@@ -307,7 +330,17 @@ public class ChatController {
 
         try {
             inFlight = executor.submit(
-                    () -> streamReply(generation, conversation, requestAttachments, startedAtNanos));
+                    () -> {
+                        try {
+                            savedRequest.join();
+                            if (generation == responseGeneration && !Thread.currentThread().isInterrupted()) {
+                                streamReply(generation, conversation, requestAttachments, startedAtNanos);
+                            }
+                        } catch (java.util.concurrent.CompletionException e) {
+                            Platform.runLater(() -> failReply(generation,
+                                    "The request was not sent because its local save failed. Use Retry save, then send again."));
+                        }
+                    });
         } catch (RejectedExecutionException e) {
             responding = false;
             inFlight = null;
@@ -500,7 +533,10 @@ public class ChatController {
 
     /** Saves the window and confirms it before the plan is built. */
     private void applyFreeTime(FocusPreferences window) {
-        focusService.setPreferences(window);
+        pendingPreferences = window;
+    }
+
+    private void confirmFreeTime(FocusPreferences window) {
         StringBuilder confirmation = new StringBuilder("Got it - I'll schedule inside **")
                 .append(FocusFormats.formatTime(window.earliest()))
                 .append(" - ")
@@ -541,9 +577,24 @@ public class ChatController {
 
         int generation = ++responseGeneration;
         List<DocumentAttachment> requestDocuments = List.copyOf(requestAttachments);
+        FocusPreferences requestPreferences = pendingPreferences;
+        pendingPreferences = null;
+        java.util.concurrent.CompletableFuture<Void> savedRequest = latestSave;
         try {
             inFlight = executor.submit(() -> {
                 try {
+                    savedRequest.join();
+                    if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
+                        return;
+                    }
+                    if (requestPreferences != null) {
+                        focusService.setPreferences(requestPreferences);
+                        Platform.runLater(() -> {
+                            if (generation == responseGeneration) {
+                                confirmFreeTime(requestPreferences);
+                            }
+                        });
+                    }
                     FocusPlan plan = focusService.importDocuments(requestDocuments);
                     Platform.runLater(() -> completeFocusCommand(generation, plan));
                 } catch (FocusPlanningException e) {
@@ -753,9 +804,12 @@ public class ChatController {
             pendingTokens.setLength(0);
         }
 
-        if (streamingMessageIndex < 0) {
-            streamingBubble = addMessage("assistant", "", List.of());
-            streamingMessageIndex = currentMessages.size() - 1;
+        if (streamingBubble == null) {
+            if (streamingMessageIndex < 0) {
+                currentMessages.add(new Message("assistant", "", List.of()));
+                streamingMessageIndex = currentMessages.size() - 1;
+            }
+            streamingBubble = addMessageNode(currentMessages.get(streamingMessageIndex));
             streamingLabel = new Label();
             streamingLabel.setWrapText(true);
             streamingLabel.setMaxWidth(BUBBLE_MAX_WIDTH);
@@ -778,7 +832,7 @@ public class ChatController {
             streamingBubble.text(text);
         }
         currentMessages.set(streamingMessageIndex,
-                new Message("assistant", text, List.of()));
+                currentMessages.get(streamingMessageIndex).withText(text, 0L, StoredMessage.Status.GENERATING));
         messageScroll.setVvalue(1.0);
     }
 
@@ -796,10 +850,12 @@ public class ChatController {
 
         if (streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
             currentMessages.set(streamingMessageIndex,
-                    new Message("assistant", finalText, List.of(), elapsedMillis));
+                    currentMessages.get(streamingMessageIndex).withText(finalText, elapsedMillis, StoredMessage.Status.COMPLETE));
             if (streamingBubble != null) {
                 renderBubbleContent(streamingBubble, finalText);
                 showCompletionTime(streamingBubble, elapsedMillis);
+            } else {
+                addMessageNode(currentMessages.get(streamingMessageIndex));
             }
             updateSelectedConversation();
             refreshHistoryIfSelected();
@@ -825,12 +881,12 @@ public class ChatController {
 
         if (streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
             String partial = streamingText.toString().strip();
-            String combined = partial.isEmpty() ? error : partial + "\n\n" + error;
             currentMessages.set(streamingMessageIndex,
-                    new Message("assistant", combined, List.of()));
+                    currentMessages.get(streamingMessageIndex).withText(partial, 0L, StoredMessage.Status.ERROR));
             if (streamingBubble != null) {
-                renderBubbleContent(streamingBubble, combined);
+                renderBubbleContent(streamingBubble, partial + "\n\n" + error);
             }
+            showSaveStatus(error, false);
             updateSelectedConversation();
             refreshHistoryIfSelected();
             scrollToBottom();
@@ -875,6 +931,12 @@ public class ChatController {
 
     private void cancelResponse() {
         boolean wasResponding = responding;
+        if (wasResponding && streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
+            flushPendingTokens();
+            Message message = currentMessages.get(streamingMessageIndex);
+            currentMessages.set(streamingMessageIndex,
+                    message.withText(message.text(), message.elapsedMillis(), StoredMessage.Status.INTERRUPTED));
+        }
         updateSelectedConversation();
         responseGeneration++;
         attachmentGeneration++;
@@ -1056,7 +1118,7 @@ public class ChatController {
     }
 
     private void updateComposerState() {
-        boolean busy = responding || extracting;
+        boolean busy = responding || extracting || preparingToQuit;
         sendButton.setDisable(busy);
         attachButton.setDisable(busy);
         modeChoice.setDisable(busy);
@@ -1065,7 +1127,8 @@ public class ChatController {
     private List<ChatMessage> conversationForModel() {
         List<ChatMessage> conversation = new ArrayList<>();
         for (Message message : currentMessages) {
-            if (message.text() == null || message.text().isBlank()) {
+            if (message.text() == null || message.text().isBlank()
+                    || message.status() == StoredMessage.Status.ERROR) {
                 continue;
             }
             MessageRole role = "user".equals(message.role())
@@ -1101,6 +1164,10 @@ public class ChatController {
             archiveCurrentConversation();
         }
         selectedHistoryIndex = -1;
+        currentConversationId = java.util.UUID.randomUUID().toString();
+        if (chatHistory != null) {
+            observeSave(chatHistory.activate(""));
+        }
         currentMessages.clear();
         messagesBox.getChildren().clear();
         attachments.clear();
@@ -1114,7 +1181,7 @@ public class ChatController {
     }
 
     private void archiveCurrentConversation() {
-        if (currentMessages.stream().noneMatch(message -> "user".equals(message.role()))) {
+        if (currentMessages.stream().noneMatch(message -> "user".equals(message.role())) && attachments.isEmpty()) {
             return;
         }
         String title = currentMessages.stream()
@@ -1123,8 +1190,8 @@ public class ChatController {
                 .map(Message::text)
                 .map(text -> text.strip().replaceAll("\\s+", " "))
                 .map(text -> text.length() > 32 ? text.substring(0, 29) + "..." : text)
-                .orElse("Conversation");
-        history.add(new Conversation(title, List.copyOf(currentMessages),
+                .orElse("Documents");
+        history.add(new Conversation(currentConversationId, title, System.currentTimeMillis(), List.copyOf(currentMessages),
                 List.copyOf(attachments)));
     }
 
@@ -1146,6 +1213,10 @@ public class ChatController {
         }
         selectedHistoryIndex = index;
         Conversation conversation = history.get(index);
+        currentConversationId = conversation.id();
+        if (chatHistory != null) {
+            observeSave(chatHistory.activate(currentConversationId));
+        }
         currentMessages.clear();
         currentMessages.addAll(conversation.messages());
         attachments.clear();
@@ -1168,7 +1239,9 @@ public class ChatController {
             historyItems.getChildren().add(empty);
             return;
         }
-        for (int i = 0; i < history.size(); i++) {
+        List<Integer> ordered = java.util.stream.IntStream.range(0, history.size()).boxed()
+                .sorted(java.util.Comparator.comparingLong((Integer i) -> history.get(i).updatedAt()).reversed()).toList();
+        for (int i : ordered) {
             int index = i;
             Conversation conversation = history.get(i);
             Button item = new Button(conversation.title());
@@ -1207,13 +1280,137 @@ public class ChatController {
     }
 
     private void updateSelectedConversation() {
+        if (restoring || preparingToQuit) {
+            return;
+        }
+        if (selectedHistoryIndex < 0 && (!attachments.isEmpty()
+                || currentMessages.stream().anyMatch(message -> "user".equals(message.role())))) {
+            archiveCurrentConversation();
+            selectedHistoryIndex = history.size() - 1;
+        }
         if (selectedHistoryIndex < 0 || selectedHistoryIndex >= history.size()) {
             return;
         }
         Conversation existing = history.get(selectedHistoryIndex);
         history.set(selectedHistoryIndex,
-                new Conversation(existing.title(), List.copyOf(currentMessages),
+                new Conversation(existing.id(), existing.title(), System.currentTimeMillis(), List.copyOf(currentMessages),
                         List.copyOf(attachments)));
+        if (chatHistory != null) {
+            Conversation snapshot = history.get(selectedHistoryIndex);
+            latestSave = chatHistory.save(toStored(snapshot));
+            observeSave(latestSave);
+            observeSave(chatHistory.activate(snapshot.id()));
+            if (currentMessages.stream().anyMatch(message -> "user".equals(message.role())) && titleRequested.add(snapshot.id())) {
+                String firstRequest = currentMessages.stream().filter(message -> "user".equals(message.role()))
+                        .findFirst().orElseThrow().text();
+                requestTitle(snapshot.id(), snapshot.title(), firstRequest, latestSave);
+            }
+        }
+    }
+
+    public void attachHistory(ChatHistoryService service) {
+        chatHistory = Objects.requireNonNull(service);
+        restoring = true;
+        try {
+            history.clear();
+            for (StoredConversation chat : service.conversations()) {
+                history.add(new Conversation(chat.id(), chat.title(), chat.updatedAt(), chat.messages().stream()
+                        .map(message -> new Message(message.id(), message.role(), message.text(), message.attachments(),
+                                message.elapsedMillis(), message.status())).toList(), chat.attachments()));
+                if (!"PENDING".equals(chat.titleState())) {
+                    titleRequested.add(chat.id());
+                }
+            }
+            String active = service.activeId();
+            for (int i = 0; i < history.size(); i++) {
+                if (history.get(i).id().equals(active)) {
+                    selectedHistoryIndex = i;
+                    Conversation chat = history.get(i);
+                    currentConversationId = chat.id();
+                    currentMessages.clear();
+                    currentMessages.addAll(chat.messages());
+                    attachments.clear();
+                    attachments.addAll(chat.attachments());
+                    renderMessages();
+                    break;
+                }
+            }
+        } finally {
+            restoring = false;
+        }
+        updateAttachmentBar();
+        refreshHistory();
+    }
+
+    private StoredConversation toStored(Conversation chat) {
+        return new StoredConversation(chat.id(), chat.title(), chat.updatedAt(), "PENDING", chat.messages().stream()
+                .map(message -> new StoredMessage(message.id(), message.role(), message.text(), message.attachments(),
+                        message.elapsedMillis(), message.status(), "TEXT")).toList(), chat.attachments());
+    }
+
+    private void requestTitle(String id, String provisional, String firstRequest,
+                              java.util.concurrent.CompletableFuture<Void> saved) {
+        try {
+            executor.submit(() -> {
+                try {
+                    saved.join();
+                    chatHistory.title(id, provisional, "REQUESTED").join();
+                    String title = chatService.conversationTitle(firstRequest);
+                    chatHistory.title(id, title, "COMPLETE").join();
+                    Platform.runLater(() -> {
+                        for (int i = 0; i < history.size(); i++) {
+                            Conversation old = history.get(i);
+                            if (old.id().equals(id)) {
+                                history.set(i, new Conversation(id, title, old.updatedAt(), old.messages(), old.attachments()));
+                            }
+                        }
+                        refreshHistory();
+                    });
+                } catch (AiException | java.util.concurrent.CompletionException e) {
+                    Platform.runLater(() -> showSaveStatus(
+                            "Chat title could not be generated. The provisional title is retained.", false));
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            showSaveStatus("The app is shutting down; the provisional chat title is retained.", false);
+        }
+    }
+
+    private void observeSave(java.util.concurrent.CompletableFuture<Void> future) {
+        future.whenComplete((unused, error) -> {
+            if (error != null) {
+                Platform.runLater(() -> showSaveStatus(
+                        "Local save failed. Content is still in memory. Check storage and choose Retry save.", true));
+            }
+        });
+    }
+
+    private void showSaveStatus(String message, boolean retry) {
+        saveStatus.setText(message);
+        saveStatus.setVisible(true);
+        saveStatus.setManaged(true);
+        if (retry) {
+            retrySaveButton.setVisible(true);
+            retrySaveButton.setManaged(true);
+        }
+    }
+
+    @FXML
+    private void retrySave() {
+        if (chatHistory == null) {
+            return;
+        }
+        retrySaveButton.setDisable(true);
+        chatHistory.retry().whenComplete((unused, error) -> Platform.runLater(() -> {
+            retrySaveButton.setDisable(false);
+            if (error == null) {
+                retrySaveButton.setVisible(false);
+                retrySaveButton.setManaged(false);
+                showSaveStatus("Local changes saved.", false);
+            } else {
+                showSaveStatus("Local save still failed. Content remains in memory; retry after fixing storage.", true);
+            }
+        }));
     }
 
     private void stopMascotReaction() {
@@ -1228,7 +1425,8 @@ public class ChatController {
     private void renderMessages() {
         messagesBox.getChildren().clear();
         for (Message message : currentMessages) {
-            if (message.text().isBlank() && message.attachments().isEmpty()) {
+            if (message.text().isBlank() && message.attachments().isEmpty()
+                    && message.status() == StoredMessage.Status.COMPLETE) {
                 continue;
             }
             addMessageNode(message);
@@ -1264,6 +1462,14 @@ public class ChatController {
         }
         if (user) {
             column.getChildren().add(messageActions(handle));
+        }
+        if (message.status() == StoredMessage.Status.INTERRUPTED || message.status() == StoredMessage.Status.ERROR) {
+            Label status = new Label(message.status() == StoredMessage.Status.INTERRUPTED
+                    ? "Reply interrupted. Send a new message to continue."
+                    : "Reply failed. Send a new message to retry.");
+            status.getStyleClass().add("muted-copy");
+            status.setWrapText(true);
+            column.getChildren().add(status);
         }
 
         HBox row = new HBox(column);
@@ -1410,6 +1616,17 @@ public class ChatController {
         }
     }
 
+    public void prepareToQuit() {
+        close();
+        preparingToQuit = true;
+        updateComposerState();
+    }
+
+    public void cancelQuit() {
+        preparingToQuit = false;
+        updateComposerState();
+    }
+
     private static final class MessageBubble {
 
         private final VBox box;
@@ -1445,8 +1662,8 @@ public class ChatController {
         }
     }
 
-    private record Message(String role, String text, List<String> attachments,
-                           long elapsedMillis) {
+    private record Message(String id, String role, String text, List<String> attachments,
+                           long elapsedMillis, StoredMessage.Status status) {
 
         private Message {
             Objects.requireNonNull(role, "role");
@@ -1460,9 +1677,17 @@ public class ChatController {
         private Message(String role, String text, List<String> attachments) {
             this(role, text, attachments, 0L);
         }
+
+        private Message(String role, String text, List<String> attachments, long elapsedMillis) {
+            this(java.util.UUID.randomUUID().toString(), role, text, attachments, elapsedMillis, StoredMessage.Status.COMPLETE);
+        }
+
+        private Message withText(String text, long elapsedMillis, StoredMessage.Status status) {
+            return new Message(id, role, text, attachments, elapsedMillis, status);
+        }
     }
 
-    private record Conversation(String title, List<Message> messages,
+    private record Conversation(String id, String title, long updatedAt, List<Message> messages,
                                 List<DocumentAttachment> attachments) {
 
         private Conversation {

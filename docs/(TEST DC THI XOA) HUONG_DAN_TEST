@@ -1,0 +1,81 @@
+## Preparation
+
+Use a **disposable data folder** so testing does not affect existing history. In a new PowerShell terminal:
+
+```powershell
+$env:PUPPY_DATA_DIRECTORY = "$env:TEMP\PuppyAI-manual-test"
+mvn javafx:run
+```
+
+Use the same folder for restart tests. Close that terminal afterward to discard the environment override.
+
+## 1. Startup and settings
+
+- [ ] Puppy starts normally and creates its local database.
+- [ ] Change **Always on top**, quit, and restart. The choice remains.
+- [ ] Select another model, quit, and restart. The selection remains.
+- [ ] Save an OpenRouter key, restart, and confirm cloud requests work without re-entering it.
+- [ ] Remove the saved key. After restarting, it remains removed. **Skip this test if the key is environment-managed.**
+- [ ] Launch another Puppy instance using the same data folder. It reports a storage/instance error without affecting the first instance.
+
+## 2. Chat history and titles
+
+- [ ] Send several messages. Replies stream and render normally.
+- [ ] A short AI-generated conversation title replaces the provisional title.
+- [ ] If title generation fails, a warning appears, but the conversation remains usable.
+- [ ] Create a second conversation. Both appear in History.
+- [ ] Switch between conversations. Their messages remain separate and correctly ordered.
+- [ ] Reply in an older conversation. It moves toward the top of History.
+- [ ] Quit and restart. The last active conversation reopens.
+- [ ] Other conversations, message text and **Completed in** timings survive restart.
+- [ ] Copy/Reuse still work on restored messages.
+- [ ] Opening an empty, greeting-only conversation does not create unnecessary saved history.
+
+## 3. Attachments
+
+Use a harmless document containing a distinctive fact.
+
+- [ ] Attach it and ask a question about that fact.
+- [ ] Quit Puppy, then move or rename the original document.
+- [ ] Restart. The attachment chip remains and Puppy can still answer from its extracted text.
+- [ ] Switch conversations. Attachments stay with their own conversation.
+- [ ] Remove the chip, restart, and confirm it stays removed.
+- [ ] Historical messages still show the attached filename.
+
+**Note:** Earlier assistant replies may contain document facts, so removing an attachment does not make those facts disappear from conversation history.
+
+## 4. Focus planner
+
+- [ ] Add a class, task and free-time window.
+- [ ] Generate a plan; add and edit a manual session.
+- [ ] Mark one session complete.
+- [ ] Quit and restart. Classes, tasks, preferences, sessions and completion remain.
+- [ ] Remove a task or class. Existing scheduled sessions are not implicitly deleted.
+- [ ] Remove a session, restart, and confirm it stays removed.
+- [ ] Clear the plan, restart, and confirm it stays cleared.
+- [ ] Regenerate a plan. It replaces the previous session list, including manual sessions—this remains intentional.
+- [ ] Start a countdown, quit, and restart. The session remains, but the countdown does **not** resume.
+
+## 5. Interruptions and failures
+
+- [ ] During a long reply, switch conversations. Tokens never appear in the wrong chat.
+- [ ] Cancel an unfinished reply, then restart. Saved partial text is identified as interrupted, not completed.
+- [ ] With Ollama stopped or cloud access unavailable, sending a message produces a visible error without losing the user message.
+- [ ] Puppy remains responsive while saving or importing Focus data.
+
+**Optional—disposable database only:** Hold a write transaction open using a SQLite tool.
+
+- [ ] Sending a message eventually displays a save error; the request is not sent to AI before saving succeeds.
+- [ ] Release the transaction and choose **Retry save**. Content survives restart.
+- [ ] Quit while saving is blocked. Puppy offers retry, cancel, or explicit quit-without-saving.
+- [ ] Cancel leaves Puppy open; retry works after releasing the lock.
+
+## Not expected yet
+
+- Custom-instructions editor.
+- Interactive quiz generation/UI.
+- Restored timer progress.
+- History search/delete/export controls.
+- Guaranteed physical erasure.
+
+Record failures with the action, expected result, actual result and screenshot. The reference plan is `IMPLEMENTATION_STATUS.md`.

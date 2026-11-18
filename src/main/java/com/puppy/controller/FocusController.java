@@ -48,6 +48,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 
 /**
  * Focus Planner panel.
@@ -200,6 +201,9 @@ public class FocusController {
     private Future<?> inFlight;
     private int importGeneration;
     private boolean importing;
+    private boolean saving;
+    private boolean closed;
+    private boolean completionFailed;
 
     private FocusSession activeSession;
     private FocusSession editingSession;
@@ -342,8 +346,10 @@ public class FocusController {
             Button remove = new Button("x");
             remove.getStyleClass().add("attachment-remove");
             remove.setOnAction(event -> {
-                focusService.removeClass(classSlot);
-                refresh();
+                mutate(plannerStatus, () -> {
+                    focusService.removeClass(classSlot);
+                    return null;
+                }, ignored -> setStatus(plannerStatus, "Class removed.", false));
             });
             row.getChildren().addAll(label, remove);
             classList.getChildren().add(row);
@@ -375,8 +381,10 @@ public class FocusController {
             Button remove = new Button("x");
             remove.getStyleClass().add("attachment-remove");
             remove.setOnAction(event -> {
-                focusService.removeTask(task);
-                refresh();
+                mutate(plannerStatus, () -> {
+                    focusService.removeTask(task);
+                    return null;
+                }, ignored -> setStatus(plannerStatus, "Task removed.", false));
             });
             row.getChildren().addAll(label, remove);
             taskList.getChildren().add(row);
@@ -461,16 +469,20 @@ public class FocusController {
         Button remove = new Button("x");
         remove.getStyleClass().add("attachment-remove");
         remove.setOnAction(event -> {
-            if (activeSession != null && activeSession.id().equals(session.id())) {
-                stopActiveSession();
-            }
-            if (editingSession != null && editingSession.id().equals(session.id())) {
-                resetSessionForm();
-                setStatus(sessionStatus,
-                        "Editing cancelled because the session was removed.", false);
-            }
-            focusService.removeSession(session.id());
-            refresh();
+            mutate(plannerStatus, () -> {
+                focusService.removeSession(session.id());
+                return null;
+            }, ignored -> {
+                if (activeSession != null && activeSession.id().equals(session.id())) {
+                    stopActiveSession();
+                }
+                if (editingSession != null && editingSession.id().equals(session.id())) {
+                    resetSessionForm();
+                    setStatus(sessionStatus,
+                            "Editing cancelled because the session was removed.", false);
+                }
+                setStatus(plannerStatus, "Session removed.", false);
+            });
         });
 
         row.getChildren().addAll(time, info, spacer, edit, start, done, remove);
@@ -526,6 +538,7 @@ public class FocusController {
         }
 
         activeSession = session;
+        completionFailed = false;
         timer = new StudyTimer(session.durationMinutes() * 60,
                 Math.max(60, session.durationMinutes() * 60));
         timer.start();
@@ -580,35 +593,36 @@ public class FocusController {
             finishActiveSession();
             return;
         }
-        try {
-            focusService.completeSession(session.id());
-            setStatus(plannerStatus, "Session marked complete. Nice work!", false);
-            refresh();
-        } catch (FocusPlanningException e) {
-            setStatus(plannerStatus, e.getMessage(), true);
-        }
+        mutate(plannerStatus, () -> focusService.completeSession(session.id()), completed ->
+                setStatus(plannerStatus, "Session marked complete. Nice work!", false));
     }
 
     private void finishActiveSession() {
-        if (activeSession == null) {
+        if (activeSession == null || saving || importing || closed) {
             return;
         }
         FocusSession finished = activeSession;
-        try {
-            focusService.completeSession(finished.id());
-        } catch (FocusPlanningException ignored) {
-            // The session may have been removed from the plan; still clear the UI.
+        if (timer != null && timer.isRunning()) {
+            timer.pause();
+            paused = true;
         }
-        activeSession = null;
-        timer = null;
-        paused = false;
-        if (mascotStateService != null) {
-            mascotStateService.setState(MascotState.HAPPY);
-            happyReaction.playFromStart();
-        }
-        timerHint.setText("Session complete. Take a short break.");
-        setStatus(plannerStatus, finished.subject() + " session complete. Well done!", false);
-        refresh();
+        mutate(plannerStatus, () -> focusService.completeSession(finished.id()), completed -> {
+            activeSession = null;
+            timer = null;
+            paused = false;
+            if (mascotStateService != null) {
+                mascotStateService.setState(MascotState.HAPPY);
+                happyReaction.playFromStart();
+            }
+            timerHint.setText("Session complete. Take a short break.");
+            setStatus(plannerStatus, finished.subject() + " session complete. Well done!", false);
+        }, error -> {
+            completionFailed = true;
+            timerHint.setText("Completion was not saved. Press Finish to retry.");
+            if (mascotStateService != null) {
+                mascotStateService.resetToIdle();
+            }
+        });
     }
 
     private void stopActiveSession() {
@@ -629,7 +643,9 @@ public class FocusController {
             return;
         }
         if (timer.isFinished()) {
-            finishActiveSession();
+            if (!completionFailed) {
+                finishActiveSession();
+            }
             return;
         }
         updateTimerCard();
@@ -653,13 +669,13 @@ public class FocusController {
         int seconds = Math.max(0, timer.getRemainingSeconds());
         timerTime.setText("%02d:%02d".formatted(seconds / 60, seconds % 60));
         timerToggle.setText(timer.isRunning() ? "Pause" : "Resume");
-        timerToggle.setDisable(false);
-        timerFinish.setDisable(false);
+        timerToggle.setDisable(saving || importing || timer.isFinished());
+        timerFinish.setDisable(saving || importing);
     }
 
     @FXML
     private void onImportFiles() {
-        if (focusService == null || importing) {
+        if (focusService == null || importing || saving || closed) {
             return;
         }
         if (executor == null) {
@@ -727,7 +743,7 @@ public class FocusController {
                         importing = false;
                         updateBusyState();
                         setStatus(importStatus,
-                                "Puppy couldn't read those files. Try a different format.", true);
+                                "Import could not be saved: " + errorMessage(e), true);
                     });
                 } finally {
                     Thread.interrupted();
@@ -741,8 +757,72 @@ public class FocusController {
     }
 
     private void updateBusyState() {
-        importButton.setDisable(importing);
-        generatePlanButton.setDisable(importing);
+        boolean busy = importing || saving;
+        importButton.setDisable(busy);
+        generatePlanButton.setDisable(busy);
+        plannerTabs.setDisable(busy);
+        classList.setDisable(busy);
+        taskList.setDisable(busy);
+        sessionsBox.setDisable(busy);
+        availableFrom.setDisable(busy);
+        availableTo.setDisable(busy);
+        clearPlanButton.setDisable(busy || focusService.sessions().isEmpty());
+        timerFinish.setDisable(busy || activeSession == null);
+    }
+
+    @FunctionalInterface
+    private interface Mutation<T> {
+        T run() throws Exception;
+    }
+
+    private <T> void mutate(Label status, Mutation<T> work, Consumer<T> success) {
+        mutate(status, work, success, error -> { });
+    }
+
+    private <T> void mutate(Label status, Mutation<T> work, Consumer<T> success,
+                            Consumer<Exception> failure) {
+        if (saving || importing || closed) {
+            return;
+        }
+        saving = true;
+        updateBusyState();
+        setStatus(status, "Saving...", false);
+        try {
+            executor.submit(() -> {
+                try {
+                    T result = work.run();
+                    Platform.runLater(() -> {
+                        saving = false;
+                        if (closed) {
+                            return;
+                        }
+                        success.accept(result);
+                        refresh();
+                        updateBusyState();
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        saving = false;
+                        if (closed) {
+                            return;
+                        }
+                        setStatus(status, "Changes were not saved: " + errorMessage(e), true);
+                        failure.accept(e);
+                        updateBusyState();
+                    });
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            saving = false;
+            setStatus(status, "Changes were not saved: the application is shutting down.", true);
+            failure.accept(e);
+            updateBusyState();
+        }
+    }
+
+    private static String errorMessage(Exception error) {
+        return error.getMessage() == null ? "Storage is unavailable. Try again."
+                : error.getMessage();
     }
 
     @FXML
@@ -755,15 +835,15 @@ public class FocusController {
                     "Add at least one task, or import a subject file first.", true);
             return;
         }
-        FocusPlan plan = focusService.generatePlan();
-        refresh();
-        if (plan.sessions().isEmpty()) {
-            setStatus(plannerStatus,
-                    "No sessions fit. Widen your free time or remove a class.", true);
-        } else {
-            setStatus(plannerStatus, "Planned " + plan.sessions().size() + " sessions ("
-                    + formatDuration(plan.totalMinutes()) + ").", false);
-        }
+        mutate(plannerStatus, focusService::generatePlan, plan -> {
+            if (plan.sessions().isEmpty()) {
+                setStatus(plannerStatus,
+                        "No sessions fit. Widen your free time or remove a class.", true);
+            } else {
+                setStatus(plannerStatus, "Planned " + plan.sessions().size() + " sessions ("
+                        + formatDuration(plan.totalMinutes()) + ").", false);
+            }
+        });
     }
 
     @FXML
@@ -779,12 +859,16 @@ public class FocusController {
             }
             LocalTime start = FocusFormats.parseTime(classStart.getText());
             LocalTime end = FocusFormats.parseTime(classEnd.getText());
-            focusService.addClass(new ClassSlot(subject, day, start, end));
-            classSubject.clear();
-            classStart.clear();
-            classEnd.clear();
-            setStatus(plannerStatus, "Class added. Press Generate plan to update sessions.", false);
-            refresh();
+            ClassSlot draft = new ClassSlot(subject, day, start, end);
+            mutate(plannerStatus, () -> {
+                focusService.addClass(draft);
+                return null;
+            }, ignored -> {
+                classSubject.clear();
+                classStart.clear();
+                classEnd.clear();
+                setStatus(plannerStatus, "Class added. Press Generate plan to update sessions.", false);
+            });
         } catch (RuntimeException e) {
             setStatus(plannerStatus, e.getMessage(), true);
         }
@@ -804,12 +888,15 @@ public class FocusController {
                 throw new IllegalArgumentException("Enter a duration in minutes.");
             }
             LocalDate deadline = taskDeadline.getValue();
-            focusService.addTask(new StudyTask(
-                    subject, title, type, minutes, deadline, Priority.MEDIUM));
-            taskTitle.clear();
-            taskMinutes.clear();
-            setStatus(plannerStatus, "Task added. Press Generate plan to schedule it.", false);
-            refresh();
+            StudyTask draft = new StudyTask(subject, title, type, minutes, deadline, Priority.MEDIUM);
+            mutate(plannerStatus, () -> {
+                focusService.addTask(draft);
+                return null;
+            }, ignored -> {
+                taskTitle.clear();
+                taskMinutes.clear();
+                setStatus(plannerStatus, "Task added. Press Generate plan to schedule it.", false);
+            });
         } catch (RuntimeException e) {
             setStatus(plannerStatus, e.getMessage(), true);
         }
@@ -833,22 +920,23 @@ public class FocusController {
                 FocusSession draft = new FocusSession(editingSession.id(), subject, title, type,
                         date, start, minutes, editingSession.priority(),
                         editingSession.completed());
-                FocusSession saved = focusService.updateSession(draft);
-                resetSessionForm();
-                setStatus(sessionStatus,
-                        "Session updated to " + saved.timeRange() + ".", false);
+                mutate(sessionStatus, () -> focusService.updateSession(draft), saved -> {
+                    resetSessionForm();
+                    setStatus(sessionStatus,
+                            "Session updated to " + saved.timeRange() + ".", false);
+                });
             } else {
                 FocusSession session = FocusService.newManualSession(
                         subject, title, type, date, start, minutes);
-                focusService.addSession(session);
-                sessionTitle.clear();
-                sessionStart.clear();
-                sessionMinutes.clear();
-                setStatus(sessionStatus,
-                        "Session added at " + session.timeRange() + ".", false);
+                mutate(sessionStatus, () -> focusService.addSession(session), saved -> {
+                    sessionTitle.clear();
+                    sessionStart.clear();
+                    sessionMinutes.clear();
+                    setStatus(sessionStatus,
+                            "Session added at " + saved.timeRange() + ".", false);
+                });
             }
-            refresh();
-        } catch (FocusPlanningException | RuntimeException e) {
+        } catch (RuntimeException e) {
             setStatus(sessionStatus, e.getMessage(), true);
         }
     }
@@ -911,12 +999,16 @@ public class FocusController {
             FocusPreferences preferences = new FocusPreferences(
                     FocusFormats.parseTime(availableFrom.getValue()),
                     FocusFormats.parseTime(availableTo.getValue()));
-            focusService.setPreferences(preferences);
-            availabilityStatus.setText("Sessions stay inside "
-                    + FocusFormats.formatTime(preferences.earliest()) + " - "
-                    + FocusFormats.formatTime(preferences.latest())
-                    + " and avoid every class.");
-            setStatus(plannerStatus, "Free time updated. Generate a plan to apply it.", false);
+            mutate(availabilityStatus, () -> {
+                focusService.setPreferences(preferences);
+                return null;
+            }, ignored -> {
+                setStatus(availabilityStatus, "Sessions stay inside "
+                        + FocusFormats.formatTime(preferences.earliest()) + " - "
+                        + FocusFormats.formatTime(preferences.latest())
+                        + " and avoid every class.", false);
+                setStatus(plannerStatus, "Free time updated. Generate a plan to apply it.", false);
+            });
         } catch (RuntimeException e) {
             setStatus(availabilityStatus, e.getMessage(), true);
         }
@@ -927,10 +1019,13 @@ public class FocusController {
         if (focusService == null) {
             return;
         }
-        stopActiveSession();
-        focusService.clearSessions();
-        setStatus(plannerStatus, "Sessions cleared. Import or generate again.", false);
-        refresh();
+        mutate(plannerStatus, () -> {
+            focusService.clearSessions();
+            return null;
+        }, ignored -> {
+            stopActiveSession();
+            setStatus(plannerStatus, "Sessions cleared. Import or generate again.", false);
+        });
     }
 
     private static String requireText(TextField field, String message) {
@@ -993,6 +1088,7 @@ public class FocusController {
 
     /** Stops background work and leaves an active session paused for the next open. */
     public void close() {
+        closed = true;
         importGeneration++;
         if (inFlight != null) {
             inFlight.cancel(true);

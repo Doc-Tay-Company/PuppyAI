@@ -275,6 +275,7 @@ public class MascotController {
         chatController.attach(services.chatService(), services.threadManager().executor(),
                 mascotStateService, services.focusService(), this::closePanel, this::collapseToMascot,
                 this::returnToMainMenu, this::toggleChatExpansion, this::openFocusPanel);
+        chatController.attachHistory(services.chatHistory());
         return view;
     }
 
@@ -314,6 +315,7 @@ public class MascotController {
                 stage.isAlwaysOnTop(),
                 this::setAlwaysOnTop, this::closePanel, this::collapseToMascot,
                 this::returnToMainMenu, this::resizeSettingsPanel);
+        settingsController.attachPersistence(services.threadManager().executor(), services.appSettings());
         return view;
     }
 
@@ -787,9 +789,36 @@ public class MascotController {
         return contextMenu;
     }
 
+    public void requestQuit() {
+        quit();
+    }
+
     private void quit() {
-        stage.close();
-        Platform.exit();
+        if (chatController != null) {
+            chatController.prepareToQuit();
+        }
+        services.chatHistory().flush().whenComplete((unused, error) -> Platform.runLater(() -> {
+            if (error != null) {
+                javafx.scene.control.Alert alert = new javafx.scene.control.Alert(
+                        javafx.scene.control.Alert.AlertType.ERROR);
+                alert.setTitle("Unsaved Puppy data");
+                alert.setHeaderText("Local changes could not be saved.");
+                alert.setContentText("Retry after checking disk space and folder access, or explicitly quit without saving.");
+                var retry = new javafx.scene.control.ButtonType("Retry", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+                var discard = new javafx.scene.control.ButtonType("Quit without saving", javafx.scene.control.ButtonBar.ButtonData.NO);
+                alert.getButtonTypes().setAll(retry, discard, javafx.scene.control.ButtonType.CANCEL);
+                var choice = alert.showAndWait();
+                if (choice.orElse(javafx.scene.control.ButtonType.CANCEL) == retry) {
+                    quit();
+                } else if (choice.orElse(javafx.scene.control.ButtonType.CANCEL) == discard) {
+                    Platform.exit();
+                } else if (chatController != null) {
+                    chatController.cancelQuit();
+                }
+            } else {
+                Platform.exit();
+            }
+        }));
     }
 
     /** Stops UI timers and releases the mascot state listener during shutdown. */

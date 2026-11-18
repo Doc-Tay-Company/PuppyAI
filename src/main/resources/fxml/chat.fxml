@@ -55,6 +55,10 @@
             </center>
             <bottom>
                 <VBox spacing="6">
+                    <Label fx:id="saveStatus" wrapText="true" styleClass="muted-copy"
+                           visible="false" managed="false"/>
+                    <Button fx:id="retrySaveButton" text="Retry save" onAction="#retrySave"
+                            styleClass="quiet-button" visible="false" managed="false"/>
                     <FlowPane fx:id="attachmentBar" hgap="6" vgap="4"
                               styleClass="attachment-bar"
                               visible="false" managed="false"/>

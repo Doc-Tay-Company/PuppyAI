@@ -59,9 +59,11 @@ class FxmlLayoutTest {
     void allUiLayoutsLoadOnTheJavaFxThread() throws Exception {
         CountDownLatch loaded = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
+        ServiceRegistry services = new ServiceRegistry(new AppConfig("Puppy AI", "test", true,
+                tempDirectory.resolve("application"), "http://127.0.0.1:1", AppConfig.DEFAULT_OLLAMA_MODEL,
+                null, AppConfig.DEFAULT_OPENROUTER_BASE_URL));
         Platform.startup(() -> Platform.runLater(() -> {
             Stage stage = new Stage();
-            ServiceRegistry services = new ServiceRegistry(AppConfig.load());
             MascotController controller = null;
             try {
                 for (String resource : List.of(
@@ -316,6 +318,7 @@ class FxmlLayoutTest {
                                 <= settingsStage.getScene().getHeight() + 1,
                         "Settings content should fit inside the window without clipping");
                 alwaysOnTop.fire();
+                awaitFx(() -> !stage.isAlwaysOnTop());
                 assertFalse(stage.isAlwaysOnTop(),
                         "The in-session always-on-top setting should update the mascot stage");
                 assertFalse(settingsStage.isAlwaysOnTop(),
@@ -386,6 +389,19 @@ class FxmlLayoutTest {
                 chatStage = findShowingStage("#historyPane");
                 assertTrue(chatStage.getScene().lookup("#historyPane").isVisible(),
                         "More should open session chat history");
+                var savedHistory = services.chatHistory().flush();
+                awaitFx(savedHistory::isDone);
+                savedHistory.join();
+                FXMLLoader restoredLoader = new FXMLLoader(getClass().getResource("/fxml/chat.fxml"));
+                restoredLoader.load();
+                ChatController restoredController = restoredLoader.getController();
+                restoredController.attach(services.chatService(), services.threadManager().executor(),
+                        services.mascotStateService(), services.focusService(), () -> { }, () -> { },
+                        () -> { }, () -> false, () -> { });
+                restoredController.attachHistory(services.chatHistory());
+                assertFalse(((VBox) restoredLoader.getNamespace().get("messagesBox")).getChildren().isEmpty(),
+                        "Restored active history must reconstruct visible messages");
+                restoredController.close();
                 closeActivePanel(chatStage, 1);
             } catch (Throwable throwable) {
                 failure.set(throwable);
@@ -394,14 +410,38 @@ class FxmlLayoutTest {
                     controller.close();
                 }
                 stage.close();
-                services.close();
                 loaded.countDown();
             }
         }));
 
         assertTrue(loaded.await(15, TimeUnit.SECONDS), "JavaFX did not load the FXML layouts in time");
+        services.chatHistory().flush().join();
+        var expectedChats = services.chatHistory().conversations();
+        String expectedActive = services.chatHistory().activeId();
+        services.close();
+        try (ServiceRegistry reopened = new ServiceRegistry(services.config())) {
+            assertEquals(expectedChats, reopened.chatHistory().conversations(),
+                    "The actual UI-created chat snapshots must survive a database reopen");
+            assertEquals(expectedActive, reopened.chatHistory().activeId());
+        }
         assertNull(failure.get(), "An FXML layout could not be loaded");
         Platform.exit();
+    }
+
+    private static void awaitFx(java.util.function.BooleanSupplier ready) {
+        Object key = new Object();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        javafx.animation.Timeline poll = new javafx.animation.Timeline();
+        poll.getKeyFrames().add(new javafx.animation.KeyFrame(javafx.util.Duration.millis(10), event -> {
+            if (ready.getAsBoolean() || System.nanoTime() > deadline) {
+                poll.stop();
+                Platform.exitNestedEventLoop(key, null);
+            }
+        }));
+        poll.setCycleCount(javafx.animation.Timeline.INDEFINITE);
+        poll.play();
+        Platform.enterNestedEventLoop(key);
+        assertTrue(ready.getAsBoolean(), "Asynchronous UI operation did not finish");
     }
 
     private static MouseEvent hover(EventType<MouseEvent> type) {

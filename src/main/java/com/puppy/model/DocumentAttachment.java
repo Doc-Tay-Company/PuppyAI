@@ -7,9 +7,9 @@ import java.util.Objects;
 /**
  * Text extracted from a file the user attached to the current conversation.
  *
- * <p>Only the extracted text is kept in memory; the original file is never
- * copied or uploaded anywhere. The text is sent to the local Ollama model as
- * part of the prompt when the user sends a message.</p>
+ * <p>History persists extracted text and filename metadata, not original files
+ * or absolute paths. Text is sent to the selected local or cloud model when
+ * used as request context. Restored attachments do not require a source file.</p>
  */
 public record DocumentAttachment(
         Path source,

@@ -13,9 +13,116 @@ features already exist.
 
 Current goal: local SQLite persistence, editable supplemental chat instructions
 in Settings, and interactive multiple-choice quizzes entirely inside Chat.
-Planning and code inspection are complete; feature implementation has not started.
+Database delivery is implemented and verified. Supplemental instructions and the
+interactive quiz feature remain pending; quiz definition storage is ready.
 
-### Verified baseline (code inspection, 2026-11-18)
+### Database delivery plan (approved 2026-11-18)
+
+This delivery implements DB-1 through DB-4 and the definition-storage portion of
+QUIZ-2, without quiz generation/UI or the instructions editor.
+
+- Store `puppy.db` in the per-user data directory, overridable by
+  `puppy.dataDirectory` / `PUPPY_DATA_DIRECTORY`. One process owns each directory
+  through an OS file lock. Use serialized JDBC work, foreign keys, bounded busy
+  waits, secure_delete and rollback journaling (no persistent WAL copies).
+- Schema v1: settings/migration markers; conversations and ordered messages;
+  per-conversation extracted attachments without absolute paths; Focus state
+  with stable internal class/task IDs and existing session IDs; quiz definitions
+  with ordered validated questions/options and typed chat references. No quiz
+  attempts, scores or timer state.
+- Transactional schema upgrades take one consistent pre-upgrade backup and reject
+  newer versions. Startup failures are visible and block normal operation.
+- Import legacy non-secret model selection once, preserving the old properties
+  file. **Keep ai-secrets.properties; do not introduce .env.** Explicit desktop
+  launch overrides win over saved settings. Non-secret settings use SQLite.
+- Save first-user-content chats immediately, restore the last active chat and
+  order history by activity. Generate one short paraphrased title through the
+  selected model, without attachments; provisional local title and a visible
+  nonblocking warning on title failure.
+- Save the user before model generation, preserve cancelled/error partial replies
+  with status, recover unfinished replies as interrupted, and exclude error
+  metadata from future prompts. Keep failed chat snapshots in memory with Retry.
+- Focus/settings publish only committed changes; UI mutations move to workers.
+  No plan-version archive, implicit session deletion, or changed regeneration.
+- Removing an attachment removes its stored text, not historical filename labels.
+  Best-effort SQLite deletion is **not** a physical-erasure guarantee on SSDs,
+  snapshots or pre-upgrade backups. Storage remains local and unencrypted.
+- Quit drains accepted saves; failures offer Retry or explicit Quit without
+  saving. Forced termination can lose streamed tokens since the last snapshot.
+- Validate temporary-database restart, locking, migration/rollback, credentials
+  separation, chat/attachment/status ordering, Focus rollback/restore and quiz
+  definition-only round trips; run targeted tests then the integrated Maven suite.
+
+Execution order: foundation/schema -> repositories/settings migration -> service
+integration -> worker-safe UI/save recovery -> tests -> update this document with
+actual results and a concrete remaining-feature plan. No separate plan file.
+
+### Database delivery outcome (2026-11-18)
+
+- DB-1 through DB-4 are implemented, including worker-safe Focus/settings
+  mutations, history restoration, failed-save retry and startup/quit handling.
+  API keys remain in `ai-secrets.properties`; no `.env` was added.
+- Actual schema v1: `settings`, `conversations`, `messages`, `attachments`,
+  `focus_state`, `quizzes`, `quiz_questions`, plus conversation/message indexes.
+  Messages have stable IDs, ordering, lifecycle status and TEXT/QUIZ entry type.
+  Foreign keys cascade from conversation to messages/attachments and quiz content.
+- Focus is stored as one validated JSON snapshot in `focus_state`, with stable
+  internal class/task IDs, existing session IDs, preferences and plan metadata.
+  This intentionally keeps the current-plan aggregate atomic instead of adding
+  unused relational joins or plan-version history. Domain records and scheduling
+  behavior stay unchanged. JSON dates/times use Jackson's Java-time support.
+- Quiz questions store four ordered options as validated JSON, a correct index,
+  explanation and difficulty. Repository validation enforces 1-20 questions and
+  distinct options. This is storage infrastructure only: no interactive quiz card,
+  attempt logic, generation or progress persistence ships in this delivery.
+- First user content (including an attachment) creates durable history; the last
+  active conversation is restored. Titles are generated once from the first
+  textual request, with a provisional title and visible warning on failure.
+- Attachments restore from extracted text with filename-only paths. Original
+  documents are not needed. Removing a chip removes stored text for that chat;
+  historical filename labels are retained. Data and backups are unencrypted.
+- SQLite uses a per-directory OS lock, serialized connection access, foreign
+  keys, five-second busy timeout, FULL synchronization, rollback journaling and
+  `secure_delete`. Backups/snapshots/SSD remnants are outside its erasure control.
+- Verification: **`mvn -q test` - 127 tests, 0 failures, 0 errors, 0 skipped**.
+  Includes real temporary-database reopen, actual UI-created history round-trip,
+  second-instance lock rejection, interrupted-reply recovery, transactional
+  rollback, migration backup/failure/newer-version rejection, atomic legacy
+  model import, credential separation, Focus mutation rollback/identity/restore,
+  JavaFX worker handoff, and quiz definition-only persistence/cascades.
+- AI title generation is tested against a local HTTP stub, including malformed
+  output; JavaFX layouts and restored chat rendering are exercised automatically.
+  **Live Ollama/OpenRouter interaction and manual desktop restart/quit dialogs
+  have not been smoke-tested.** Native-access/unnamed-JavaFX warnings and the
+  pre-existing PDFBox/POI logging-provider warning remain non-failing.
+
+### Concrete next implementation plan
+
+1. **PROMPT-1 - supplemental instructions:** add a bounded non-secret setting
+   and cached service accessor; add a multiline Settings editor with Save/Reset;
+   compose delimited preferences below the fixed persona without changing Focus
+   or Quiz contracts. Verify persistence, failed-save behavior, exact outbound
+   prompt shape and next-request-only changes; test small-screen Settings fit.
+2. **QUIZ-1 - generation and learning logic:** use existing `QuizDefinition` and
+   `ModelService.jsonChat`; extract count/difficulty requests (5/Medium defaults,
+   1-20 questions, mixed per-question difficulty), validate the complete result,
+   and implement deterministic in-memory checking/navigation/scoring/retry.
+   Test malformed output, wrong counts/options, mixed difficulty and no AI calls
+   for grading or retry. No attempt/score fields may enter persisted history.
+3. **QUIZ-2 remaining integration:** atomically attach a definition to an ordered
+   QUIZ chat entry; connect repository reads to typed history restoration.
+   Preserve entry types when UI snapshots are rebuilt. Reopening after process
+   restart must create an entirely unanswered attempt from the saved definition.
+4. **QUIZ-3 - Chat-only interaction:** add Multiple Quiz to the composer and
+   original Puppy-styled cards, one question at a time, Previous/Next, Check
+   answer, locked feedback, final score/review and Retry. Keep normal Chat usable;
+   isolate attempts/cancellation callbacks by chat and quiz ID.
+5. **VERIFY-1 - release gate:** run focused tests then the full suite, manually
+   verify local/cloud generation, failure/quit/restart flows and screen fit,
+   update README for newly shipped behavior and close ledger items only with
+   recorded evidence. Retest that quiz selections/scores never reach SQLite.
+
+### Pre-delivery baseline (historical code inspection, 2026-11-18)
 
 - Java 25 / JavaFX 25.0.5, one desktop process, Maven and JUnit. No SQLite/JDBC
   dependency, database initialization, schema migrations or repositories exist.
@@ -40,8 +147,8 @@ Planning and code inspection are complete; feature implementation has not starte
   a Pomodoro timer, not a quiz engine.
 - Existing coverage includes provider clients, settings, bounded prompts,
   document extraction, Focus services/planner, timers and JavaFX layouts.
-  Tests were not rerun for this documentation-only planning change; historical
-  test counts below are not a newly verified baseline.
+  This describes the code before the database delivery; use the outcome above
+  for current verification rather than historical test counts below.
 
 ### Confirmed product decisions
 
@@ -120,13 +227,13 @@ have passed; record the actual validation command/result when closing an item.
 
 | ID | Work item | Depends on | Status |
 | --- | --- | --- | --- |
-| DB-1 | SQLite JDBC dependency, connection lifecycle, serialized execution, schema/migrations and explicit startup errors | None | Not started |
-| DB-2 | Non-secret settings repository/service, one-time legacy model-choice migration, persistent desktop preferences; retain secret file | DB-1 | Not started |
-| DB-3 | Durable history models/repository/service; save active/archived chats, message timing and extracted attachments; restore history | DB-1 | Not started |
-| DB-4 | Focus repositories, transactional mutations and full state restoration; adapt controller worker/UI handoff | DB-1 | Not started |
+| DB-1 | SQLite JDBC dependency, connection lifecycle, serialized execution, schema/migrations and explicit startup errors | None | Complete - automated suite passed; manual smoke checks listed above remain |
+| DB-2 | Non-secret settings repository/service, one-time legacy model-choice migration, persistent desktop preferences; retain secret file | DB-1 | Complete - atomic migration/rollback and preference tests passed |
+| DB-3 | Durable history models/repository/service; save active/archived chats, message timing and extracted attachments; restore history | DB-1 | Complete - reopen/retry/UI history tests passed |
+| DB-4 | Focus repositories, transactional mutations and full state restoration; adapt controller worker/UI handoff | DB-1 | Complete - persistence/rollback/worker tests passed |
 | PROMPT-1 | Supplemental instructions service integration, Settings editor with Save/Reset, bounded composition and request snapshots | DB-2 | Not started |
 | QUIZ-1 | Quiz models, structured request extraction/generation/parser, per-question difficulty and deterministic in-memory attempt logic | None | Not started |
-| QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | Not started |
+| QUIZ-2 | Persist quiz definitions and typed history references; restore fresh unanswered attempts, retry without generation | DB-3, QUIZ-1 | In progress - definition schema/repository complete; runtime entry/card integration awaits quiz feature |
 | QUIZ-3 | Multiple Quiz composer mode and Puppy-styled interactive Chat cards, navigation/feedback/score/review/retry | QUIZ-2 | Not started |
 | VERIFY-1 | Cross-feature restart/failure/regression tests, manual local/cloud smoke checks and current-behavior documentation | DB-2, DB-3, DB-4, PROMPT-1, QUIZ-3 | Not started |
 
@@ -220,7 +327,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | --- | --- | --- |
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
-| 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Not started - DB-1 through DB-4 and QUIZ-2 above |
+| 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage delivery and automated checks above; interactive quizzes remain milestone 6 |
 | 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
 | 6 | Study mode, settings, integration | Partial: Pomodoro/settings exist; supplemental instructions and Chat quizzes not started (PROMPT-1, QUIZ-1 through QUIZ-3) |
@@ -469,7 +576,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | `ChatProvider` | Contract implemented by `OllamaClient` and `OpenRouterClient`; `ModelService` constructs and routes to it. Controllers never construct a provider. |
 | `OllamaClient` | Local `/api/chat` streaming, JSON mode, availability checks and friendly errors. |
 | `OpenRouterClient` | Cloud SSE streaming, JSON mode, bearer header, redacted errors and OpenRouter-specific friendly messages. |
-| `AiSettingsStore` | Persists the model choice and OpenRouter key in the local data directory; never used by controllers directly. |
+| `AiSettingsStore` | Persists model choice through SQLite, imports legacy selection once and keeps the OpenRouter key in its separate secret file; never used by controllers directly. |
+| `Database` / repositories | Serialized JDBC transactions, schema lifecycle and durable chat/Focus/settings/quiz-definition storage. |
+| `ChatHistoryService` | Owns durable chat snapshots, active-chat state, title updates, queued writes and failed-save retry. |
+| `AppSettingsService` | Cached always-on-top preference; changes publish after a successful SQLite commit. |
 | `StudyTimer` | `StudyController` owns the JavaFX ticker and calls `start()` / `pause()` / `reset()` and `completePhase()` when a phase finishes. |
 | `MascotStateService` | The single place that changes the mascot animation; listeners marshal to the JavaFX thread. |
 | `MockChatResponder` | Legacy stand-in retained for its unit test; it is no longer connected to the UI. |
@@ -495,7 +605,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
   `ChatPromptBuilder` keeps at most ten turns, 8,000 characters of history and
   20,000 characters of document text; the local model runs with a
   16,384-token context window.
-- **Attachments:** only extracted text is kept in memory. With a local model it
+- **Attachments:** extracted text and filename metadata persist locally. With a local model it
   stays on this computer; with a cloud model it is sent to OpenRouter and its
   model provider with the prompt. Up to five files can be attached per
   conversation; the attachment bar restores when an archived conversation is
@@ -507,8 +617,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
   request win; the priority rules (study must not be interrupted by an idle
   refresh) belong to milestone 6.
 - **Data directory:** `AppConfig` resolves `%LOCALAPPDATA%\PuppyAI` (or
-  `~/.local/share/PuppyAI`). `AiSettingsStore` writes the model choice and
-  OpenRouter key there; no runtime data is written inside the project.
+  `~/.local/share/PuppyAI`). SQLite stores chat, Focus, non-secret settings and
+  quiz definitions there;
+  `AiSettingsStore` keeps the API key in a separate secret file. The directory is
+  configurable; runtime data should not be placed inside the project.
 - **Focus pipeline:** the selected model only extracts facts from timetable/task
   files; `FocusPlanner` makes every scheduling decision. This keeps the hard
   constraints deterministic and testable when the model is unavailable. Import
@@ -519,7 +631,7 @@ progress or scores is intentionally excluded, not a missing persistence task.
   Quick task per subject, due at the end of the default week (today + 6 days).
   Imports merge into the existing class/task set and exact duplicates are
   ignored.
-- **Focus sessions:** sessions are in memory only. `Generate plan` rebuilds the
+- **Focus sessions:** sessions and completion persist in SQLite. `Generate plan` rebuilds the
   scheduled list from classes and tasks; hand-made sessions are not carried into
   a regenerated plan. Manual and generated sessions can be edited in the Session
   tab, with placement re-validated on save. A running Focus countdown keeps the
@@ -531,9 +643,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
   spritesheet guidance is no longer part of the current implementation plan.
 - The entire 336 × 252 window captures mouse input, including transparent
   pixels; per-pixel hit testing is not part of the MVP.
-- Chat history, attachments and all Focus data (classes, tasks, preferences and
-  sessions) are session-only; persistence is planned in DB-1 through DB-4 above.
-  The model choice and OpenRouter key do persist in the local data directory.
+- SQLite data and extracted attachments are not encrypted. Best-effort deletion
+  cannot guarantee physical erasure from SSDs, filesystem snapshots or backups.
+- History is loaded into memory at startup; pagination/search/retention controls
+  are deferred. Large long-lived histories may require future paging work.
 - Supplemental instructions and Multiple Quiz mode are not implemented; see
   PROMPT-1 and QUIZ-1 through QUIZ-3 above.
 - Regenerating a Focus plan replaces the scheduled session list, so hand-made
@@ -594,8 +707,8 @@ progress or scores is intentionally excluded, not a missing persistence task.
    UI.
 10. Puppy's rules and document context share one starting system message, which
     both Ollama and OpenRouter accept as a normal system message.
-11. Only extracted document text is held in memory. Original files stay where
-    the user chose them. That text is sent to OpenRouter and its model provider
+11. Only extracted document text and filename metadata persist; original files
+    stay where the user chose them. That text is sent to OpenRouter and its model provider
     only while a cloud model is selected; the local model keeps it on this
     computer.
 12. The OpenRouter key is stored outside the repository in the user's data
