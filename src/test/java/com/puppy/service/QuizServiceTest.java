@@ -86,6 +86,22 @@ class QuizServiceTest {
     }
 
     @Test
+    void reusesValidatedIntentSpecificationAndConversationEvidenceWithoutSpecCall() throws Exception {
+        List<String> levels = List.of("HARD");
+        Fake fake = new Fake(definition(levels).toString());
+        var context = List.of(ChatMessage.user("Earlier we discussed Java inheritance."));
+        var plan = new QuizService.Specification(1, List.of(QuizDefinition.Difficulty.HARD));
+        var quiz = new QuizService(fake).generate("message", "Make a quiz about that discussion.", List.of(),
+                context, plan, true);
+
+        assertEquals(1, quiz.questions().size());
+        assertEquals(1, fake.calls.size(), "Validated intent specification skips extraction only");
+        assertTrue(fake.calls.getFirst().getLast().content().contains("Earlier we discussed Java inheritance."));
+        assertTrue(fake.calls.getFirst().getLast().content().contains("Source grounded: true"));
+        assertTrue(fake.calls.getFirst().getFirst().content().contains("selected conversation evidence"));
+    }
+
+    @Test
     void invalidSpecificationsStopBeforeGenerationWithoutRetry() {
         for (String value : List.of("not json", "{}", "null", "[]",
                 "{\"count\":0,\"difficulties\":null}",

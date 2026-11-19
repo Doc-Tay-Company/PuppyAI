@@ -102,7 +102,7 @@ class ChatServiceTest {
             preferences.set("Updated saved preference");
             models.selectModel(com.puppy.ai.AiModels.localModelId(AppConfig.DEFAULT_OLLAMA_MODEL));
             assertEquals("Hello", service.reply(prepared, token -> { }));
-            assertTrue(requests.get(0).path("messages").get(0).path("content").asText().contains("First saved preference"));
+            assertTrue(requests.get(0).path("messages").get(1).path("content").asText().contains("First saved preference"));
             assertFalse(requests.get(0).toString().contains("Updated saved preference"));
 
             service.reply(conversation, java.util.List.of(), token -> { });

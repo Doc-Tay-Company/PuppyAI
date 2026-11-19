@@ -20,10 +20,12 @@ import com.puppy.service.ChatService;
 import com.puppy.service.FocusFormats;
 import com.puppy.service.FocusPlanningException;
 import com.puppy.service.FocusService;
+import com.puppy.service.IntentResolutionService;
 import com.puppy.service.MascotStateService;
 import com.puppy.ui.MarkdownRenderer;
 import com.puppy.ui.QuizCard;
 import com.puppy.util.DurationFormats;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
@@ -75,6 +77,8 @@ import java.util.function.BooleanSupplier;
  * attachments into the current conversation context.</p>
  */
 public class ChatController {
+    private static final ObjectMapper HISTORY_CONTEXT_JSON = new ObjectMapper();
+    private static final System.Logger LOG = System.getLogger(ChatController.class.getName());
 
     /** What the composer option does when Send is pressed. */
     enum ComposerMode {
@@ -183,7 +187,9 @@ public class ChatController {
     private FocusPreferences pendingPreferences;
     private ChatHistoryService chatHistory;
     private QuizService quizService;
+    private IntentResolutionService intentResolutionService;
     private String activeQuizId;
+    private String activeRouteMessageId;
     private final java.util.Map<String, QuizJob> quizJobs = new java.util.HashMap<>();
     private final java.util.Map<String, QuizCard> quizCards = new java.util.HashMap<>();
     private String currentConversationId = java.util.UUID.randomUUID().toString();
@@ -263,6 +269,10 @@ public class ChatController {
         this.quizService = Objects.requireNonNull(quizService);
     }
 
+    public void attachIntentResolution(IntentResolutionService service) {
+        this.intentResolutionService = Objects.requireNonNull(service);
+    }
+
     @FXML
     private void sendMessage() {
         if (responding || extracting || preparingToQuit) {
@@ -291,7 +301,7 @@ public class ChatController {
 
         switch (mode) {
             case QUIZ -> {
-                startQuiz(message);
+                routeRequest(message, IntentResolutionService.Preference.MULTIPLE_QUIZ);
                 resetComposerMode();
                 messageInput.requestFocus();
             }
@@ -317,36 +327,252 @@ public class ChatController {
                     messageInput.requestFocus();
                     return;
                 }
-                sendChat(chatMessage);
+                routeRequest(chatMessage, IntentResolutionService.Preference.CHAT);
             }
         }
     }
 
-    private void startQuiz(String request) {
+    private void routeRequest(String message, IntentResolutionService.Preference preference) {
+        if (intentResolutionService == null || chatService == null || chatHistory == null) {
+            showSaveStatus("AI request routing is not available. Reopen Chat and try again.", false);
+            return;
+        }
+        String request = message == null ? "" : message.strip();
+        if (preference == IntentResolutionService.Preference.MULTIPLE_QUIZ && request.isEmpty()) {
+            request = "Create a quiz from the attached documents.";
+        }
+        if (request.isBlank() && attachments.isEmpty()) return;
+        final String requestSnapshot = request;
+        pendingFocus = null;
+        boolean unavailableHistoryOmitted = currentMessages.stream().anyMatch(item ->
+                item.status() != StoredMessage.Status.COMPLETE || item.entryType().equals("QUIZ"));
+        List<Message> priorMessageSnapshot = intentHistoryMessages(currentMessages);
+        List<String> fileNames = attachments.stream().map(DocumentAttachment::fileName).toList();
+        addMessage("user", requestSnapshot, fileNames);
+        Message placeholder = new Message(java.util.UUID.randomUUID().toString(), "assistant", "",
+                List.of(), 0L, StoredMessage.Status.GENERATING);
+        currentMessages.add(placeholder);
+        streamingMessageIndex = currentMessages.size() - 1;
+        activeRouteMessageId = placeholder.id();
+        updateSelectedConversation();
+
+        responding = true;
+        thinkingLabel.setManaged(true);
+        thinkingLabel.setVisible(true);
+        updateComposerState();
+        mascotStateService.setState(MascotState.THINKING);
+        int generation = ++responseGeneration;
+        String conversationId = currentConversationId;
+        List<ChatMessage> priorChatSnapshot = priorMessageSnapshot.stream().map(ChatController::toChatMessage).toList();
+        List<ChatMessage> conversationSnapshot = new ArrayList<>(priorChatSnapshot);
+        conversationSnapshot.add(ChatMessage.user(requestSnapshot));
+        List<Message> boundedMessages = boundedIntentMessages(priorMessageSnapshot);
+        List<ChatMessage> boundedHistory = boundedMessages.stream()
+                .map(item -> priorChatSnapshot.get(priorMessageSnapshot.indexOf(item))).toList();
+        List<IntentResolutionService.HistoryItem> historyItems = boundedMessages.stream()
+                .map(messageItem -> new IntentResolutionService.HistoryItem(toChatMessage(messageItem).role(),
+                        messageItem.text(), messageItem.attachments()))
+                .toList();
+        List<DocumentAttachment> documentSnapshot = List.copyOf(attachments);
+        String instructionSnapshot = chatService.snapshotAdditionalInstructions();
+        updateSelectedConversation();
+        java.util.concurrent.CompletableFuture<Void> requestSave = latestSave;
+        try {
+            inFlight = executor.submit(() -> {
+                try {
+                    requestSave.join();
+                    if (generation != responseGeneration || Thread.currentThread().isInterrupted()) return;
+                    IntentResolutionService.Decision decision = intentResolutionService.resolve(
+                            requestSnapshot, preference, historyItems, documentSnapshot, unavailableHistoryOmitted);
+                    Platform.runLater(() -> completeRouting(generation, conversationId, placeholder.id(), requestSnapshot,
+                            conversationSnapshot, boundedHistory, documentSnapshot, instructionSnapshot, decision));
+                } catch (java.util.concurrent.CompletionException e) {
+                    Platform.runLater(() -> failRouting(generation, conversationId, placeholder.id(),
+                            "The request was not routed because its local save failed. Retry after checking storage."));
+                } catch (AiException e) {
+                    if (e.reason() != AiException.Reason.INTERRUPTED) {
+                        logRoutingFailure(e.reason().name(), e);
+                        Platform.runLater(() -> failRouting(generation, conversationId, placeholder.id(),
+                                routingFailureMessage(e.reason())));
+                    }
+                } catch (RuntimeException e) {
+                    logRoutingFailure("UNEXPECTED", e);
+                    Platform.runLater(() -> failRouting(generation, conversationId, placeholder.id(),
+                            "Puppy couldn't process the request because of a technical problem. Please try again."));
+                } finally {
+                    Thread.interrupted();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            failRouting(generation, conversationId, placeholder.id(), "The app is shutting down. The request was not sent.");
+        }
+    }
+
+    static String routingFailureMessage(AiException.Reason reason) {
+        return switch (reason) {
+            case RATE_LIMIT -> "The AI service is limiting requests right now. Please wait a moment and try again.";
+            case PROTOCOL -> "The AI service returned a response Puppy couldn't read. Please try again.";
+            case UNAVAILABLE -> "Puppy couldn't connect to the AI service. Please check the connection and try again.";
+            case TIMEOUT -> "The AI service took too long to respond. Please try again in a moment.";
+            case AUTHENTICATION -> "The AI service couldn't authorize this request. Please check the API key in Settings.";
+            case MODEL_NOT_FOUND -> "The selected AI model isn't available. Please choose another model in Settings.";
+            case HTTP -> "The AI service couldn't complete this request. Please try again later or check the service account.";
+            case INTERRUPTED -> "Request cancelled.";
+        };
+    }
+
+    private static void logRoutingFailure(String category, Exception error) {
+        // Do not log message/history, provider bodies, exception messages or credentials.
+        LOG.log(System.Logger.Level.WARNING, "Routing failed: category={0}, exception={1}, cause={2}",
+                category, error.getClass().getSimpleName(),
+                error.getCause() == null ? "none" : error.getCause().getClass().getSimpleName());
+    }
+
+    private static List<Message> intentHistoryMessages(List<Message> messages) {
+        return messages.stream().filter(message -> message.status() == StoredMessage.Status.COMPLETE
+                && !message.text().isBlank()
+                && !"QUIZ".equals(message.entryType())).toList();
+    }
+
+    private static List<Message> boundedIntentMessages(List<Message> input) {
+        List<Message> selected = new ArrayList<>();
+        int chars = 0;
+        for (int i = input.size() - 1; i >= 0 && selected.size() < 80; i--) {
+            Message message = input.get(i);
+            if (message.text().isBlank() || chars + message.text().length() > 24_000) break;
+            selected.add(message);
+            chars += message.text().length();
+        }
+        java.util.Collections.reverse(selected);
+        return List.copyOf(selected);
+    }
+
+    private static ChatMessage toChatMessage(Message message) {
+        MessageRole role = "user".equals(message.role()) ? MessageRole.USER : MessageRole.ASSISTANT;
+        String content = message.text();
+        if (!message.attachments().isEmpty()) {
+            try {
+                content += "\nAttachment filename metadata (untrusted JSON): "
+                        + HISTORY_CONTEXT_JSON.writeValueAsString(message.attachments());
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("Could not encode attachment metadata.", e);
+            }
+        }
+        return new ChatMessage(role, content);
+    }
+
+    private void completeRouting(int generation, String conversationId, String messageId, String request,
+                                 List<ChatMessage> conversationSnapshot, List<ChatMessage> boundedHistory,
+                                 List<DocumentAttachment> documentSnapshot, String instructionSnapshot,
+                                 IntentResolutionService.Decision decision) {
+        if (!isCurrentRoute(generation, conversationId, messageId)) return;
+        activeRouteMessageId = null;
+        switch (decision.outcome()) {
+            case CHAT -> {
+                List<ChatMessage> relevant = decision.relevantHistoryIndexes().stream()
+                        .map(boundedHistory::get).toList();
+                ChatService.Request chatRequest = chatService.prepareReply(conversationSnapshot,
+                        documentSnapshot, relevant, instructionSnapshot);
+                startChatStream(generation, messageId, chatRequest);
+            }
+            case CLARIFY, CONTEXT_UNAVAILABLE -> finishRoutedText(messageId, decision.reply(),
+                    StoredMessage.Status.COMPLETE);
+            case GENERATE_QUIZ -> {
+                List<ChatMessage> relevant = decision.relevantHistoryIndexes().stream()
+                        .map(boundedHistory::get).toList();
+                int chars = relevant.stream().mapToInt(item -> item.content().length()).sum();
+                if (chars > 8_000) {
+                    finishRoutedText(messageId,
+                            "The relevant discussion is larger than the quiz context limit. Please restate the key details.",
+                            StoredMessage.Status.COMPLETE);
+                    return;
+                }
+                List<DocumentAttachment> selectedDocuments = decision.requiredSourceIndexes().stream()
+                        .map(documentSnapshot::get).toList();
+                QuizService.Specification specification = null;
+                if (decision.hasValidatedSpecification()) {
+                    List<QuizDefinition.Difficulty> levels = decision.difficulties().isEmpty()
+                            ? java.util.Collections.nCopies(decision.count(), QuizDefinition.Difficulty.MEDIUM)
+                            : decision.difficulties().stream().map(QuizDefinition.Difficulty::valueOf).toList();
+                    specification = new QuizService.Specification(decision.count(), levels);
+                }
+                finishRoutedText(messageId, "Quiz request confirmed.", StoredMessage.Status.COMPLETE);
+                startQuiz(request, conversationId, selectedDocuments, relevant, specification,
+                        decision.sourceRequired() || decision.documentRequired(), decision.topic());
+            }
+        }
+    }
+
+    private boolean isCurrentRoute(int generation, String conversationId, String messageId) {
+        return responding && generation == responseGeneration && conversationId.equals(currentConversationId)
+                && messageId.equals(activeRouteMessageId);
+    }
+
+    private void finishRoutedText(String messageId, String text, StoredMessage.Status status) {
+        int index = messageIndex(messageId);
+        if (index < 0) return;
+        Message updated = currentMessages.get(index).withText(text, 0L, status);
+        currentMessages.set(index, updated);
+        addMessageNode(updated);
+        updateSelectedConversation();
+        refreshHistoryIfSelected();
+        resetStreamingState();
+        finishReplyUi(status == StoredMessage.Status.COMPLETE);
+    }
+
+    private void failRouting(int generation, String conversationId, String messageId, String error) {
+        if (!isCurrentRoute(generation, conversationId, messageId)) return;
+        activeRouteMessageId = null;
+        finishRoutedText(messageId, error, StoredMessage.Status.ERROR);
+        showSaveStatus(error, false);
+    }
+
+    private int messageIndex(String id) {
+        for (int i = 0; i < currentMessages.size(); i++) {
+            if (currentMessages.get(i).id().equals(id)) return i;
+        }
+        return -1;
+    }
+
+    private void startChatStream(int generation, String messageId, ChatService.Request request) {
+        streamingMessageIndex = messageIndex(messageId);
+        // The route placeholder remains the assistant bubble for the streamed reply.
+        if (streamingMessageIndex < 0) {
+            streamingMessageIndex = currentMessages.size() - 1;
+        }
+        streamingText.setLength(0);
+        clearPendingTokens();
+        streamTicker.playFromStart();
+        long startedAtNanos = System.nanoTime();
+        try {
+            inFlight = executor.submit(() -> streamReply(generation, request, startedAtNanos));
+        } catch (RejectedExecutionException e) {
+            failReply(generation, "The app is shutting down. The request was not sent.");
+        }
+    }
+
+    private void startQuiz(String request, String conversationId, List<DocumentAttachment> documents,
+                           List<ChatMessage> conversationContext, QuizService.Specification specification,
+                           boolean sourceGrounded, String resolvedTopic) {
         if (quizService == null || chatHistory == null) {
+            finishReplyUi(false);
             showSaveStatus("Quiz generation is not available. Reopen Chat and try again.", false);
             return;
         }
-        if (request.isBlank() && attachments.isEmpty()) {
-            showAttachmentStatus("Describe a topic or attach documents for your quiz.", true);
-            return;
-        }
-        pendingFocus = null;
-        addMessage("user", request.isBlank() ? "Make a quiz from the attached documents." : request,
-                attachments.stream().map(DocumentAttachment::fileName).toList());
         String id = java.util.UUID.randomUUID().toString();
-        QuizJob job = new QuizJob(id, currentConversationId, request, List.copyOf(attachments));
+        QuizJob job = new QuizJob(id, conversationId, request, documents, conversationContext,
+                specification, sourceGrounded, resolvedTopic);
         quizJobs.put(id, job);
         currentMessages.add(new Message(id, "assistant", "Generating quiz...", List.of(), 0L,
                 StoredMessage.Status.GENERATING));
         updateSelectedConversation(true);
         addMessageNode(currentMessages.getLast());
-        runQuiz(job);
+        runQuiz(job, true);
         scrollToBottom();
     }
 
-    private void runQuiz(QuizJob job) {
-        if (responding || extracting || preparingToQuit) {
+    private void runQuiz(QuizJob job, boolean alreadyResponding) {
+        if ((!alreadyResponding && responding) || extracting || preparingToQuit) {
             showSaveStatus("Finish or cancel the current request before retrying quiz generation.", false);
             return;
         }
@@ -367,7 +593,8 @@ public class ChatController {
                     if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
                         return;
                     }
-                    QuizDefinition definition = quizService.generate(job.id, job.request, job.documents);
+                    QuizDefinition definition = quizService.generate(job.id, job.request, job.documents,
+                            job.conversationContext, job.specification, job.sourceGrounded, job.resolvedTopic);
                     Platform.runLater(() -> completeQuiz(job, definition, generation));
                 } catch (QuizException e) {
                     if (!Thread.currentThread().isInterrupted()) {
@@ -492,7 +719,7 @@ public class ChatController {
                     refreshQuizJob(job);
                 }));
             } else if (job.error != null) {
-                runQuiz(job);
+                runQuiz(job, false);
             } else if (job.id.equals(activeQuizId)) {
                 cancelResponse();
             }
@@ -509,68 +736,26 @@ public class ChatController {
         private final String conversationId;
         private final String request;
         private final List<DocumentAttachment> documents;
+        private final List<ChatMessage> conversationContext;
+        private final QuizService.Specification specification;
+        private final boolean sourceGrounded;
+        private final String resolvedTopic;
         private QuizDefinition definition;
         private VBox content;
         private String error;
         private boolean ready;
 
-        private QuizJob(String id, String conversationId, String request, List<DocumentAttachment> documents) {
+        private QuizJob(String id, String conversationId, String request, List<DocumentAttachment> documents,
+                        List<ChatMessage> conversationContext, QuizService.Specification specification,
+                        boolean sourceGrounded, String resolvedTopic) {
             this.id = id;
             this.conversationId = conversationId;
             this.request = request;
             this.documents = List.copyOf(documents);
-        }
-    }
-
-    private void sendChat(String message) {
-        List<String> fileNames = attachments.stream()
-                .map(DocumentAttachment::fileName)
-                .toList();
-
-        addMessage("user", message, fileNames);
-        Message placeholder = new Message(java.util.UUID.randomUUID().toString(), "assistant", "",
-                List.of(), 0L, StoredMessage.Status.GENERATING);
-        currentMessages.add(placeholder);
-        streamingMessageIndex = currentMessages.size() - 1;
-        updateSelectedConversation();
-        java.util.concurrent.CompletableFuture<Void> savedRequest = latestSave;
-        responding = true;
-        thinkingLabel.setManaged(true);
-        thinkingLabel.setVisible(true);
-        updateComposerState();
-        mascotStateService.setState(MascotState.THINKING);
-
-        int generation = ++responseGeneration;
-        clearPendingTokens();
-        streamTicker.playFromStart();
-        List<ChatMessage> conversation = conversationForModel();
-        List<DocumentAttachment> requestAttachments = List.copyOf(attachments);
-        ChatService.Request request = chatService.prepareReply(conversation, requestAttachments);
-        long startedAtNanos = System.nanoTime();
-
-        try {
-            inFlight = executor.submit(
-                    () -> {
-                        try {
-                            savedRequest.join();
-                            if (generation == responseGeneration && !Thread.currentThread().isInterrupted()) {
-                                streamReply(generation, request, startedAtNanos);
-                            }
-                        } catch (java.util.concurrent.CompletionException e) {
-                            Platform.runLater(() -> failReply(generation,
-                                    "The request was not sent because its local save failed. Use Retry save, then send again."));
-                        }
-                    });
-        } catch (RejectedExecutionException e) {
-            responding = false;
-            inFlight = null;
-            streamTicker.stop();
-            thinkingLabel.setManaged(false);
-            thinkingLabel.setVisible(false);
-            updateComposerState();
-            addMessage("assistant",
-                    "I couldn't start a reply because the application is shutting down.", List.of());
-            mascotStateService.resetToIdle();
+            this.conversationContext = List.copyOf(conversationContext);
+            this.specification = specification;
+            this.sourceGrounded = sourceGrounded;
+            this.resolvedTopic = resolvedTopic;
         }
     }
 
@@ -606,7 +791,8 @@ public class ChatController {
             return true;
         }
         if ("/quiz".equals(command)) {
-            startQuiz(input.strip().substring("/quiz".length()).strip());
+            routeRequest("Create a quiz: " + input.strip().substring("/quiz".length()).strip(),
+                    IntentResolutionService.Preference.CHAT);
             return true;
         }
         String reply = switch (command) {
@@ -1004,15 +1190,24 @@ public class ChatController {
     }
 
     private void enqueueToken(int generation, String token) {
-        if (generation != responseGeneration || token == null || token.isEmpty()) {
+        if (token == null || token.isEmpty()) {
             return;
         }
+        boolean scheduleFlush;
         synchronized (pendingTokens) {
+            if (generation != responseGeneration) return;
+            scheduleFlush = pendingTokens.isEmpty();
             pendingTokens.append(token);
+        }
+        if (scheduleFlush) {
+            // Coalesce queued chunks, but don't wait for the next 80 ms animation pulse.
+            Platform.runLater(() -> {
+                if (generation == responseGeneration && responding) flushPendingTokens();
+            });
         }
     }
 
-    /** Coalesces streamed tokens on a fixed UI cadence instead of per-token repaints. */
+    /** Drains coalesced tokens on JavaFX; the periodic ticker also provides a flush opportunity. */
     private void flushPendingTokens() {
         if (!responding) {
             clearPendingTokens();
@@ -1064,7 +1259,7 @@ public class ChatController {
         if (generation != responseGeneration || !responding) {
             return;
         }
-        clearPendingTokens();
+        flushPendingTokens();
         streamTicker.stop();
 
         String finalText = reply == null ? "" : reply.strip();
@@ -1096,7 +1291,7 @@ public class ChatController {
         if (generation != responseGeneration || !responding) {
             return;
         }
-        clearPendingTokens();
+        flushPendingTokens();
         streamTicker.stop();
 
         String error = message == null || message.isBlank()
@@ -1155,6 +1350,8 @@ public class ChatController {
 
     private void cancelResponse() {
         boolean wasResponding = responding;
+        String routingId = activeRouteMessageId;
+        activeRouteMessageId = null;
         if (activeQuizId != null) {
             QuizJob job = quizJobs.get(activeQuizId);
             job.error = "Quiz generation cancelled. You can retry when ready.";
@@ -1162,7 +1359,15 @@ public class ChatController {
             activeQuizId = null;
             refreshQuizJob(job);
         }
-        if (wasResponding && streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
+        if (routingId != null) {
+            int index = messageIndex(routingId);
+            if (index >= 0) {
+                Message interrupted = currentMessages.get(index).withText(
+                        "Request cancelled before routing completed.", 0L, StoredMessage.Status.INTERRUPTED);
+                currentMessages.set(index, interrupted);
+                if (streamingBubble == null) addMessageNode(interrupted);
+            }
+        } else if (wasResponding && streamingMessageIndex >= 0 && streamingMessageIndex < currentMessages.size()) {
             flushPendingTokens();
             Message message = currentMessages.get(streamingMessageIndex);
             currentMessages.set(streamingMessageIndex,
@@ -1360,13 +1565,14 @@ public class ChatController {
         for (Message message : currentMessages) {
             if (message.text() == null || message.text().isBlank()
                     || message.status() == StoredMessage.Status.ERROR || message.entryType().equals("QUIZ")
+                    || message.status() != StoredMessage.Status.COMPLETE
                     || quizJobs.containsKey(message.id())) {
                 continue;
             }
             MessageRole role = "user".equals(message.role())
                     ? MessageRole.USER
                     : MessageRole.ASSISTANT;
-            conversation.add(new ChatMessage(role, message.text()));
+            conversation.add(toChatMessage(message));
         }
         return conversation;
     }

@@ -283,6 +283,7 @@ public class MascotController {
                 this::returnToMainMenu, this::toggleChatExpansion, this::openFocusPanel);
         chatController.attachHistory(services.chatHistory());
         chatController.attachQuiz(services.quizService());
+        chatController.attachIntentResolution(services.intentResolutionService());
         return view;
     }
 

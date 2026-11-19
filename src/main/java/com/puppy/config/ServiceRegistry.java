@@ -12,6 +12,7 @@ import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
 import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
+import com.puppy.service.IntentResolutionService;
 import com.puppy.service.MascotStateService;
 import com.puppy.service.ModelService;
 import com.puppy.service.QuizService;
@@ -42,6 +43,7 @@ public final class ServiceRegistry implements AutoCloseable {
     private final AppSettingsService appSettings;
     private final QuizRepository quizzes;
     private final QuizService quizService;
+    private final IntentResolutionService intentResolutionService;
 
     private boolean started;
     private boolean closed;
@@ -58,6 +60,7 @@ public final class ServiceRegistry implements AutoCloseable {
             this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
             this.quizzes = new QuizRepository(database);
             this.quizService = new QuizService(modelService);
+            this.intentResolutionService = new IntentResolutionService(modelService);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
             this.chatService = new ChatService(modelService, documentTextExtractor, appSettings::additionalInstructions);
             this.focusService = new FocusService(
@@ -113,6 +116,7 @@ public final class ServiceRegistry implements AutoCloseable {
     public AppSettingsService appSettings() { return appSettings; }
     public QuizRepository quizzes() { return quizzes; }
     public QuizService quizService() { return quizService; }
+    public IntentResolutionService intentResolutionService() { return intentResolutionService; }
 
     /** Releases every service; called from {@code Application.stop()}. */
     @Override

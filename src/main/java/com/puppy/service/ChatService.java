@@ -45,7 +45,22 @@ public final class ChatService {
 
     /** Captures saved preferences before a request can wait on background work. */
     public Request prepareReply(List<ChatMessage> conversation, List<DocumentAttachment> attachments) {
-        return new Request(ChatPromptBuilder.build(conversation, attachments, additionalInstructions.get()));
+        return prepareReply(conversation, attachments, List.of());
+    }
+
+    public Request prepareReply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
+                                List<ChatMessage> relevantHistory) {
+        return prepareReply(conversation, attachments, relevantHistory, additionalInstructions.get());
+    }
+
+    public String snapshotAdditionalInstructions() {
+        return additionalInstructions.get();
+    }
+
+    public Request prepareReply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
+                                List<ChatMessage> relevantHistory, String instructionSnapshot) {
+        return new Request(ChatPromptBuilder.build(conversation, attachments, instructionSnapshot,
+                relevantHistory));
     }
 
     public String reply(Request request, Consumer<String> onToken) throws AiException {

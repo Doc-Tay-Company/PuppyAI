@@ -76,7 +76,21 @@ class QuizInteractionTest {
                 var request = JSON.readTree(exchange.getRequestBody());
                 String system = request.path("messages").get(0).path("content").asText();
                 String reply;
-                if (system.contains("Paraphrase the user's request")) {
+                if (request.path("stream").asBoolean()) {
+                    reply = "A streamed reply.";
+                } else if (system.contains("route one user request")) {
+                    var routingInput = JSON.readTree(request.path("messages").get(1).path("content").asText());
+                    if (routingInput.path("currentMessage").asText().equals("Hello!")) {
+                        reply = "{\"intent\":\"CHAT\",\"reply\":\"\",\"topic\":null,\"count\":null,"
+                                + "\"difficulties\":null,\"requiredSourceIds\":[],\"relevantHistoryIndexes\":[],"
+                                + "\"sourceRequired\":false,\"documentRequired\":false,\"allowGeneralKnowledge\":false}";
+                    } else {
+                    reply = "{\"intent\":\"GENERATE_QUIZ\",\"reply\":\"\",\"topic\":\"capitals\","
+                            + "\"count\":2,\"difficulties\":[\"EASY\",\"EASY\"],"
+                            + "\"requiredSourceIds\":[],\"relevantHistoryIndexes\":[],"
+                            + "\"sourceRequired\":false,\"documentRequired\":false,\"allowGeneralKnowledge\":true}";
+                    }
+                } else if (system.contains("Paraphrase the user's request")) {
                     reply = "{\"title\":\"Capital practice\"}";
                 } else {
                     int call = quizCalls.incrementAndGet();
@@ -85,8 +99,7 @@ class QuizInteractionTest {
                         try { release.await(10, TimeUnit.SECONDS); }
                         catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                     }
-                    reply = call % 2 == 1 ? "{\"count\":2,\"difficulties\":[\"EASY\",\"EASY\"]}"
-                            : invalid.get() ? "not valid JSON" : generated();
+                    reply = invalid.get() ? "not valid JSON" : generated();
                 }
                 byte[] bytes = JSON.writeValueAsBytes(Map.of("message", Map.of("content", reply), "done", true));
                 try {
@@ -106,7 +119,15 @@ class QuizInteractionTest {
                     Ui ui = fx(() -> open(services));
                     fx(() -> { generate(ui); return null; });
                     await(() -> cards(ui).size() == 1);
-                    assertEquals(2, quizCalls.get());
+                    assertEquals(1, quizCalls.get());
+                    fx(() -> {
+                        ui.input().setText("Hello!");
+                        ui.mode().setValue(ChatController.ComposerMode.QUIZ);
+                        ui.send().fire();
+                        return null;
+                    });
+                    await(() -> ui.messages().getChildren().stream().anyMatch(node -> text(node, "A streamed reply.")));
+                    assertEquals(1, quizCalls.get(), "Quiz preference must not force a greeting into Quiz generation");
                     fx(() -> {
                         QuizCard card = cards(ui).getFirst();
                         option(card, "A.").fire();
@@ -125,11 +146,11 @@ class QuizInteractionTest {
                     invalid.set(true);
                     fx(() -> { generate(ui); return null; });
                     await(() -> hasButton(latestBlock(ui), "Retry generation"));
-                    assertEquals(4, quizCalls.get(), "Invalid output must not be retried automatically");
+                    assertEquals(2, quizCalls.get(), "Invalid output must not be retried automatically");
                     invalid.set(false);
                     fx(() -> { button(latestBlock(ui), "Retry generation").fire(); return null; });
                     await(() -> cards(ui).size() == 2);
-                    assertEquals(6, quizCalls.get());
+                    assertEquals(3, quizCalls.get());
                     fx(() -> { assertTrue(text(cards(ui).getFirst(), "2 / 2")); return null; });
 
                     sql(config, "CREATE TRIGGER reject_quiz BEFORE INSERT ON quiz_questions BEGIN SELECT RAISE(ABORT,'injected'); END");
@@ -245,6 +266,7 @@ class QuizInteractionTest {
                     services.focusService(), () -> { }, () -> { }, () -> { }, () -> false, () -> { });
             controller.attachHistory(services.chatHistory());
             controller.attachQuiz(services.quizService());
+            controller.attachIntentResolution(services.intentResolutionService());
             root.applyCss();
             root.layout();
             @SuppressWarnings("unchecked")
