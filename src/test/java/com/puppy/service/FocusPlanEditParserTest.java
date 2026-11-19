@@ -142,6 +142,30 @@ class FocusPlanEditParserTest {
     }
 
     @Test
+    void parsesModesBreaksLimitsAndTaskActions() throws Exception {
+        FocusEditResult result = parser.parse("""
+                {"actions":[
+                  {"type":"CHANGE_TYPE","sessionIndex":1,"focusType":"EXAM"},
+                  {"type":"SET_BREAK","durationMinutes":15},
+                  {"type":"SET_SESSION_LIMIT","durationMinutes":60},
+                  {"type":"ADD_TASK","subject":"Chemistry","title":"Review acids",
+                   "focusType":"QUICK","date":"2026-11-20","start":"18:00",
+                   "durationMinutes":25},
+                  {"type":"REMOVE_TASK","subject":"History"},
+                  {"type":"PRIORITIZE_SUBJECT","subject":"Math","priority":"HIGH"}
+                ],"summary":"Updated study settings and tasks."}
+                """, TODAY);
+
+        assertEquals(6, result.actions().size());
+        assertEquals(FocusType.EXAM, result.actions().get(0).focusType());
+        assertEquals(FocusEditAction.Type.SET_BREAK, result.actions().get(1).type());
+        assertEquals(FocusEditAction.Type.ADD_TASK, result.actions().get(3).type());
+        assertEquals(FocusEditAction.Type.REMOVE_TASK, result.actions().get(4).type());
+        assertEquals(FocusEditAction.Type.PRIORITIZE_SUBJECT,
+                result.actions().get(5).type());
+    }
+
+    @Test
     void skipsSpecificActionsMissingRequiredFields() throws Exception {
         String json = """
                 {

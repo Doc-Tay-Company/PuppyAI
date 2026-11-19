@@ -440,6 +440,12 @@ public final class FocusFormats {
         if (key.isEmpty()) {
             return fallback;
         }
+        if (key.contains("exam") || key.contains("mock test")
+                || key.contains("past paper") || key.contains("practice test")
+                || key.contains("thi thu") || key.contains("luyen de")
+                || key.contains("on thi")) {
+            return FocusType.EXAM;
+        }
         if (key.contains("deep") || key.contains("assignment") || key.contains("coding")
                 || key.contains("program") || key.contains("research") || key.contains("project")
                 || key.contains("lab") || key.contains("essay") || key.contains("important")
@@ -534,8 +540,13 @@ public final class FocusFormats {
         return normalize(value).replaceAll("\\s+", " ").strip();
     }
 
+    /** Identifies a subject after canonical naming and normalisation. */
+    static String subjectKey(String subject) {
+        return com.puppy.util.SubjectNames.key(subject);
+    }
+
     /** Identifies a task by subject and title after the same normalisation. */
     static String taskKey(String subject, String title) {
-        return comparisonKey(subject) + '\u0000' + comparisonKey(title);
+        return subjectKey(subject) + '\u0000' + comparisonKey(title);
     }
 }

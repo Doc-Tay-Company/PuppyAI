@@ -8,7 +8,7 @@ import java.time.LocalTime;
 import java.util.Objects;
 
 /**
- * One edit action the AI wants to apply to the current focus plan.
+ * One edit action the AI wants to apply to the current study plan.
  *
  * <p>Session actions target a session by its one-based index in the numbered
  * plan the AI was shown. {@code ADD} carries a full session description and
@@ -34,8 +34,14 @@ public record FocusEditAction(
         RESIZE,
         REMOVE,
         CHANGE_SUBJECT,
+        CHANGE_TYPE,
         ADD,
+        ADD_TASK,
+        REMOVE_TASK,
+        PRIORITIZE_SUBJECT,
         SET_WINDOW,
+        SET_BREAK,
+        SET_SESSION_LIMIT,
         /** General patch kept for compatibility with older editor replies. */
         UPDATE
     }
@@ -66,7 +72,8 @@ public record FocusEditAction(
 
     public static boolean targetsSession(Type type) {
         return type == Type.MOVE || type == Type.RESIZE || type == Type.REMOVE
-                || type == Type.CHANGE_SUBJECT || type == Type.UPDATE;
+                || type == Type.CHANGE_SUBJECT || type == Type.CHANGE_TYPE
+                || type == Type.UPDATE;
     }
 
     /** Convenience factory for a remove action. */
@@ -97,6 +104,16 @@ public record FocusEditAction(
     public static FocusEditAction setWindow(LocalTime earliest, LocalTime latest) {
         return new FocusEditAction(Type.SET_WINDOW, 0,
                 null, null, null, null, null, null, null, earliest, latest);
+    }
+
+    public static FocusEditAction setBreak(int minutes) {
+        return new FocusEditAction(Type.SET_BREAK, 0,
+                null, null, null, null, null, minutes, null);
+    }
+
+    public static FocusEditAction setSessionLimit(int minutes) {
+        return new FocusEditAction(Type.SET_SESSION_LIMIT, 0,
+                null, null, null, null, null, minutes, null);
     }
 
     /** Convenience factory for an add action with full session details. */

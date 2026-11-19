@@ -17,7 +17,7 @@
       fx:id="focusRoot" fx:controller="com.puppy.controller.FocusController"
       styleClass="panel-card, focus-panel" spacing="8" minWidth="0" minHeight="0">
     <HBox styleClass="panel-header" alignment="CENTER_LEFT" spacing="8">
-        <Label text="Focus Planner" styleClass="panel-title"/>
+        <Label text="Study" styleClass="panel-title"/>
         <Label text="plan around school, deadlines and free time" styleClass="muted-copy"/>
         <Region HBox.hgrow="ALWAYS"/>
         <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
@@ -39,6 +39,13 @@
                        HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
                 <Button fx:id="changeTimeButton" text="Change time" onAction="#onChangeTime"
                         styleClass="quiet-button"/>
+            </HBox>
+            <HBox spacing="6" alignment="CENTER_LEFT">
+                <Label text="Break" styleClass="muted-copy"/>
+                <TextField fx:id="breakMinutes" promptText="10" prefWidth="52"/>
+                <Label text="min · Max session" styleClass="muted-copy"/>
+                <TextField fx:id="maxSessionMinutes" promptText="90" prefWidth="52"/>
+                <Label text="min" styleClass="muted-copy"/>
             </HBox>
 
             <TabPane fx:id="plannerTabs" styleClass="focus-tabs" tabClosingPolicy="UNAVAILABLE"
@@ -64,7 +71,7 @@
 
                     <Tab text="Classes">
                         <VBox styleClass="focus-tab-content" spacing="6">
-                            <Label text="Add each weekly class. Focus sessions never overlap these times."
+                            <Label text="Add each weekly class. Planned sessions never overlap these times."
                                    styleClass="muted-copy" wrapText="true"/>
                             <TextField fx:id="classSubject" promptText="Subject"/>
                             <HBox spacing="6">
@@ -85,11 +92,8 @@
 
                     <Tab text="Tasks">
                         <VBox styleClass="focus-tab-content" spacing="6">
-                            <Label text="Quick focus covers light review and reading. Deep focus covers important or difficult work, low confidence, programming, assignments and research."
-                                   styleClass="muted-copy" wrapText="true"/>
                             <TextField fx:id="taskSubject" promptText="Subject"/>
                             <TextField fx:id="taskTitle" promptText="Task or assignment"/>
-                            <ComboBox fx:id="taskType" maxWidth="Infinity"/>
                             <HBox spacing="6">
                                 <TextField fx:id="taskMinutes" promptText="Minutes, e.g. 90"
                                            prefWidth="130"/>
@@ -110,11 +114,10 @@
                     <Tab fx:id="sessionTab" text="Session">
                         <VBox styleClass="focus-tab-content" spacing="6">
                             <Label fx:id="sessionFormHint"
-                                   text="Create a one-off session directly in the planner."
+                                   text="Create a one-off session directly in the plan."
                                    styleClass="muted-copy" wrapText="true"/>
                             <TextField fx:id="sessionSubject" promptText="Subject"/>
                             <TextField fx:id="sessionTitle" promptText="What will you do?"/>
-                            <ComboBox fx:id="sessionType" maxWidth="Infinity"/>
                             <HBox spacing="6">
                                 <DatePicker fx:id="sessionDate" HBox.hgrow="ALWAYS"/>
                                 <TextField fx:id="sessionStart" promptText="18:00" prefWidth="90"/>

@@ -6,6 +6,8 @@ import com.puppy.repository.ChatRepository;
 import com.puppy.repository.FocusRepository;
 import com.puppy.repository.QuizRepository;
 import com.puppy.repository.SettingsRepository;
+import com.puppy.repository.TodoRepository;
+import com.puppy.service.AiTaskRefinementService;
 import com.puppy.service.AiFocusPlanExtractor;
 import com.puppy.service.AppSettingsService;
 import com.puppy.service.ChatHistoryService;
@@ -14,6 +16,7 @@ import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
 import com.puppy.service.MascotStateService;
 import com.puppy.service.ModelService;
+import com.puppy.service.TodoService;
 import com.puppy.util.ThreadManager;
 
 import java.time.Clock;
@@ -40,6 +43,8 @@ public final class ServiceRegistry implements AutoCloseable {
     private final ChatHistoryService chatHistory;
     private final AppSettingsService appSettings;
     private final QuizRepository quizzes;
+    private final TodoService todoService;
+    private final AiTaskRefinementService taskRefinementService;
 
     private boolean started;
     private boolean closed;
@@ -58,6 +63,8 @@ public final class ServiceRegistry implements AutoCloseable {
                     threadManager.executor());
             this.chatHistory = new ChatHistoryService(new ChatRepository(database), settings);
             this.quizzes = new QuizRepository(database);
+            this.todoService = new TodoService(new TodoRepository(settings));
+            this.taskRefinementService = new AiTaskRefinementService(modelService);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
             this.chatService = new ChatService(modelService, documentTextExtractor);
             this.focusService = new FocusService(
@@ -103,7 +110,7 @@ public final class ServiceRegistry implements AutoCloseable {
         return chatService;
     }
 
-    /** Persisted Focus planner shared by the panel and chat. */
+    /** Persisted Study data shared by the panel and chat. */
     public FocusService focusService() {
         return focusService;
     }
@@ -115,6 +122,8 @@ public final class ServiceRegistry implements AutoCloseable {
     public ChatHistoryService chatHistory() { return chatHistory; }
     public AppSettingsService appSettings() { return appSettings; }
     public QuizRepository quizzes() { return quizzes; }
+    public TodoService todoService() { return todoService; }
+    public AiTaskRefinementService taskRefinementService() { return taskRefinementService; }
 
     /** Releases every service; called from {@code Application.stop()}. */
     @Override

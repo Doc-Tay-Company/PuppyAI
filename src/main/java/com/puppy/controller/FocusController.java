@@ -1,6 +1,7 @@
 package com.puppy.controller;
 
 import com.puppy.enums.FocusType;
+import com.puppy.enums.FocusSessionState;
 import com.puppy.enums.MascotState;
 import com.puppy.enums.Priority;
 import com.puppy.model.ClassSlot;
@@ -55,12 +56,11 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 
 /**
- * Focus Planner panel.
+ * Study panel.
  *
  * <p>The left column collects timetable, task and free-time data (imported from
- * a file or typed by hand). The right column shows the generated sessions,
- * their type and completion state, and an optional countdown for the active
- * session.</p>
+ * a file or typed by hand). The right column shows the generated sessions, their
+ * completion state and an optional countdown for the active session.</p>
  */
 public class FocusController {
 
@@ -78,6 +78,12 @@ public class FocusController {
 
     @FXML
     private Button changeTimeButton;
+
+    @FXML
+    private TextField breakMinutes;
+
+    @FXML
+    private TextField maxSessionMinutes;
 
     @FXML
     private TabPane plannerTabs;
@@ -116,9 +122,6 @@ public class FocusController {
     private TextField taskTitle;
 
     @FXML
-    private ComboBox<FocusType> taskType;
-
-    @FXML
     private TextField taskMinutes;
 
     @FXML
@@ -138,9 +141,6 @@ public class FocusController {
 
     @FXML
     private TextField sessionTitle;
-
-    @FXML
-    private ComboBox<FocusType> sessionType;
 
     @FXML
     private DatePicker sessionDate;
@@ -230,6 +230,8 @@ public class FocusController {
         availableTo.getItems().setAll(halfHourOptions());
         availableFrom.setValue("08:00");
         availableTo.setValue("22:00");
+        breakMinutes.setText("10");
+        maxSessionMinutes.setText("90");
 
         classDay.getItems().setAll(DayOfWeek.values());
         classDay.setConverter(new StringConverter<>() {
@@ -244,10 +246,6 @@ public class FocusController {
             }
         });
 
-        taskType.getItems().setAll(FocusType.values());
-        taskType.setValue(FocusType.QUICK);
-        sessionType.getItems().setAll(FocusType.values());
-        sessionType.setValue(FocusType.QUICK);
         sessionDate.setValue(LocalDate.now());
         resetSessionForm();
 
@@ -286,11 +284,15 @@ public class FocusController {
         FocusPreferences preferences = focusService.preferences();
         availableFrom.setValue(FocusFormats.formatTime(preferences.earliest()));
         availableTo.setValue(FocusFormats.formatTime(preferences.latest()));
+        breakMinutes.setText(Integer.toString(preferences.breakMinutes()));
+        maxSessionMinutes.setText(Integer.toString(preferences.maxSessionMinutes()));
         StringBuilder status = new StringBuilder("Sessions stay inside ")
                 .append(availableFrom.getValue())
                 .append(" - ")
                 .append(availableTo.getValue())
-                .append(" and avoid every class.");
+                .append(", with ").append(preferences.breakMinutes())
+                .append("m breaks and a ").append(preferences.maxSessionMinutes())
+                .append("m session limit.");
         if (!focusService.preferencesConfigured()) {
             status.append(" Press Change time to save your own window.");
         }
@@ -305,7 +307,7 @@ public class FocusController {
         loadPreferences();
     }
 
-    /** Reloads every list from the shared service. Public for the chat focus flow. */
+    /** Reloads every list from the shared service. Public for the Chat Study flow. */
     public void refresh() {
         if (focusService == null) {
             return;
@@ -404,8 +406,7 @@ public class FocusController {
                     ? "no deadline"
                     : "due " + FocusFormats.formatDate(task.deadline());
             Label label = new Label(task.subject() + " - " + task.title() + "\n"
-                    + task.type().label() + " - " + task.estimatedMinutes() + "m - "
-                    + deadline);
+                    + task.estimatedMinutes() + "m - " + deadline);
             label.getStyleClass().add("focus-list-text");
             label.setWrapText(true);
             HBox.setHgrow(label, javafx.scene.layout.Priority.ALWAYS);
@@ -454,7 +455,7 @@ public class FocusController {
         if (active) {
             row.getStyleClass().add("focus-session-active");
         }
-        if (session.completed()) {
+        if (session.state().finished()) {
             row.getStyleClass().add("focus-session-completed");
         }
 
@@ -470,11 +471,14 @@ public class FocusController {
         title.setMaxWidth(340);
 
         HBox badges = new HBox(4);
-        badges.getChildren().add(badge(session.type().label(),
-                session.type() == FocusType.DEEP ? "focus-type-deep" : "focus-type-quick"));
-        if (session.completed()) {
-            badges.getChildren().add(badge("Completed", "focus-completed-badge"));
-        }
+        String stateStyle = switch (session.state()) {
+            case PENDING -> "focus-pending-badge";
+            case ACTIVE -> "focus-active-badge";
+            case PAUSED -> "focus-paused-badge";
+            case COMPLETED -> "focus-completed-badge";
+            case SKIPPED -> "focus-skipped-badge";
+        };
+        badges.getChildren().add(badge(session.state().label(), stateStyle));
 
         VBox info = new VBox(2, subject, title, badges);
         HBox.setHgrow(info, javafx.scene.layout.Priority.ALWAYS);
@@ -490,13 +494,18 @@ public class FocusController {
                 ? (timer != null && timer.isRunning() ? "Pause" : "Resume")
                 : "Start");
         start.getStyleClass().add("quiet-button");
-        start.setDisable(session.completed());
+        start.setDisable(session.state().finished());
         start.setOnAction(event -> onSessionStart(session));
 
         Button done = new Button("Done");
         done.getStyleClass().add("quiet-button");
-        done.setDisable(session.completed());
+        done.setDisable(session.state().finished());
         done.setOnAction(event -> completeSession(session));
+
+        Button skip = new Button("Skip");
+        skip.getStyleClass().add("quiet-button");
+        skip.setDisable(session.state().finished());
+        skip.setOnAction(event -> skipSession(session));
 
         Button remove = new Button("x");
         remove.getStyleClass().add("attachment-remove");
@@ -517,7 +526,7 @@ public class FocusController {
             });
         });
 
-        row.getChildren().addAll(time, info, spacer, edit, start, done, remove);
+        row.getChildren().addAll(time, info, spacer, edit, start, done, skip, remove);
         return row;
     }
 
@@ -557,7 +566,7 @@ public class FocusController {
     }
 
     private void onSessionStart(FocusSession session) {
-        if (focusService == null || session.completed()) {
+        if (focusService == null || session.state().finished()) {
             return;
         }
         if (activeSession != null && activeSession.id().equals(session.id())) {
@@ -569,6 +578,35 @@ public class FocusController {
             return;
         }
 
+        // The timer reacts immediately to the user's explicit Start action;
+        // persistence still runs on the worker and reports any failure.
+        startSessionTimer(session.withState(FocusSessionState.ACTIVE));
+        persistSessionState(session.id(), FocusSessionState.ACTIVE);
+    }
+
+    private void persistSessionState(String id, FocusSessionState state) {
+        try {
+            executor.submit(() -> {
+                try {
+                    FocusSession saved = focusService.setSessionState(id, state);
+                    Platform.runLater(() -> {
+                        if (activeSession != null && activeSession.id().equals(saved.id())) {
+                            activeSession = saved;
+                        }
+                        refresh();
+                    });
+                } catch (RuntimeException | FocusPlanningException e) {
+                    Platform.runLater(() -> setStatus(plannerStatus,
+                            e.getMessage() == null ? "Session state was not saved." : e.getMessage(),
+                            true));
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            setStatus(plannerStatus, "The app is shutting down; session state was not saved.", true);
+        }
+    }
+
+    private void startSessionTimer(FocusSession session) {
         activeSession = session;
         completionFailed = false;
         timer = new StudyTimer(session.durationMinutes() * 60,
@@ -578,9 +616,7 @@ public class FocusController {
         if (mascotStateService != null) {
             mascotStateService.setState(MascotState.STUDYING);
         }
-        timerHint.setText(session.type() == FocusType.DEEP
-                ? "Deep work in progress. Puppy is focusing with you."
-                : "Quick focus in progress. One small block at a time.");
+        timerHint.setText("Study session in progress. One block at a time.");
         refresh();
     }
 
@@ -596,19 +632,27 @@ public class FocusController {
             return;
         }
         if (timer.isRunning()) {
-            timer.pause();
-            paused = true;
-            if (mascotStateService != null) {
-                mascotStateService.resetToIdle();
-            }
-            timerHint.setText("Paused. Resume when you are ready.");
+            mutate(timerHint, () -> focusService.setSessionState(
+                    activeSession.id(), FocusSessionState.PAUSED), saved -> {
+                activeSession = saved;
+                timer.pause();
+                paused = true;
+                if (mascotStateService != null) {
+                    mascotStateService.resetToIdle();
+                }
+                timerHint.setText("Paused. Resume when you are ready.");
+            });
         } else if (!timer.isFinished()) {
-            timer.start();
-            paused = false;
-            if (mascotStateService != null) {
-                mascotStateService.setState(MascotState.STUDYING);
-            }
-            timerHint.setText("Focusing. Puppy is right here with you.");
+            mutate(timerHint, () -> focusService.setSessionState(
+                    activeSession.id(), FocusSessionState.ACTIVE), saved -> {
+                activeSession = saved;
+                timer.start();
+                paused = false;
+                if (mascotStateService != null) {
+                    mascotStateService.setState(MascotState.STUDYING);
+                }
+                timerHint.setText("Focusing. Puppy is right here with you.");
+            });
         }
         updateTimerCard();
     }
@@ -627,6 +671,16 @@ public class FocusController {
         }
         mutate(plannerStatus, () -> focusService.completeSession(session.id()), completed ->
                 setStatus(plannerStatus, "Session marked complete. Nice work!", false));
+    }
+
+    private void skipSession(FocusSession session) {
+        mutate(plannerStatus, () -> focusService.skipSession(session.id()), skipped -> {
+            if (activeSession != null && activeSession.id().equals(skipped.id())) {
+                stopActiveSession();
+            }
+            setStatus(plannerStatus,
+                    "Session skipped and preserved in study history.", false);
+        });
     }
 
     private void finishActiveSession() {
@@ -697,7 +751,7 @@ public class FocusController {
             return;
         }
         timerTitle.setText(activeSession.subject());
-        timerMeta.setText(activeSession.title() + " - " + activeSession.type().label());
+        timerMeta.setText(activeSession.title());
         int seconds = Math.max(0, timer.getRemainingSeconds());
         timerTime.setText("%02d:%02d".formatted(seconds / 60, seconds % 60));
         timerToggle.setText(timer.isRunning() ? "Pause" : "Resume");
@@ -923,7 +977,9 @@ public class FocusController {
         try {
             String subject = requireText(taskSubject, "Enter the subject name.");
             String title = requireText(taskTitle, "Enter the task name.");
-            FocusType type = taskType.getValue() == null ? FocusType.QUICK : taskType.getValue();
+            // Focus-type classification is hidden for now. New work uses one
+            // neutral stored type so older saved plans still load unchanged.
+            FocusType type = FocusType.QUICK;
             int minutes = FocusFormats.parseMinutes(taskMinutes.getText());
             if (minutes <= 0) {
                 throw new IllegalArgumentException("Enter a duration in minutes.");
@@ -951,8 +1007,9 @@ public class FocusController {
         try {
             String subject = requireText(sessionSubject, "Enter the subject name.");
             String title = requireText(sessionTitle, "Enter the session name.");
-            FocusType type = sessionType.getValue() == null
-                    ? FocusType.QUICK : sessionType.getValue();
+            // Keep the stored type when editing an older session, but create new
+            // sessions without exposing a classification.
+            FocusType type = editingSession == null ? FocusType.QUICK : editingSession.type();
             LocalDate date = sessionDate.getValue() == null
                     ? LocalDate.now() : sessionDate.getValue();
             LocalTime start = FocusFormats.parseTime(sessionStart.getText());
@@ -1000,7 +1057,6 @@ public class FocusController {
         editingSession = session;
         sessionSubject.setText(session.subject());
         sessionTitle.setText(session.title());
-        sessionType.setValue(session.type());
         sessionDate.setValue(session.date());
         sessionStart.setText(FocusFormats.formatTime(session.start()));
         sessionMinutes.setText(Integer.toString(session.durationMinutes()));
@@ -1031,7 +1087,6 @@ public class FocusController {
             sessionTitle.clear();
             sessionStart.clear();
             sessionMinutes.clear();
-            sessionType.setValue(FocusType.QUICK);
             sessionDate.setValue(LocalDate.now());
         }
         if (sessionSaveButton != null) {
@@ -1041,7 +1096,7 @@ public class FocusController {
             applyToAllSubjects.setSelected(false);
             applyToAllSubjects.setManaged(false);
             applyToAllSubjects.setVisible(false);
-            sessionFormHint.setText("Create a one-off session directly in the planner.");
+            sessionFormHint.setText("Create a one-off session directly in the plan.");
         }
     }
 
@@ -1053,7 +1108,11 @@ public class FocusController {
         try {
             FocusPreferences preferences = new FocusPreferences(
                     FocusFormats.parseTime(availableFrom.getValue()),
-                    FocusFormats.parseTime(availableTo.getValue()));
+                    FocusFormats.parseTime(availableTo.getValue()),
+                    focusService.preferences().planFrom(),
+                    focusService.preferences().planUntil(),
+                    Integer.parseInt(breakMinutes.getText().strip()),
+                    Integer.parseInt(maxSessionMinutes.getText().strip()));
             mutate(availabilityStatus, () -> {
                 focusService.setPreferences(preferences);
                 return null;
@@ -1061,7 +1120,8 @@ public class FocusController {
                 setStatus(availabilityStatus, "Sessions stay inside "
                         + FocusFormats.formatTime(preferences.earliest()) + " - "
                         + FocusFormats.formatTime(preferences.latest())
-                        + " and avoid every class.", false);
+                        + ", with " + preferences.breakMinutes() + "m breaks and a "
+                        + preferences.maxSessionMinutes() + "m session limit.", false);
                 setStatus(plannerStatus, "Free time updated. Generate a plan to apply it.", false);
             });
         } catch (RuntimeException e) {

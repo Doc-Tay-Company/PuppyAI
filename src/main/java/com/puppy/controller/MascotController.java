@@ -49,6 +49,7 @@ public class MascotController {
     private static final double COMPACT_WIDTH = 336;
     private static final double COMPACT_HEIGHT = 252;
     private static final double MENU_WIDTH = 380;
+    private static final double MAIN_MENU_WIDTH = 480;
     private static final double MENU_HEIGHT = 360;
     private static final double MENU_BAR_HEIGHT = 76;
     private static final double STUDY_WIDTH = 380;
@@ -61,6 +62,8 @@ public class MascotController {
     private static final double CHAT_PREFERRED_HEIGHT = 720;
     private static final double FOCUS_PREFERRED_WIDTH = 980;
     private static final double FOCUS_PREFERRED_HEIGHT = 840;
+    private static final double TODO_PREFERRED_WIDTH = 1000;
+    private static final double TODO_PREFERRED_HEIGHT = 760;
     private static final double SCREEN_EDGE_MARGIN = 48;
     private static final double DRAG_THRESHOLD = 5;
     private static final Duration SLEEP_AFTER = Duration.minutes(5);
@@ -112,6 +115,7 @@ public class MascotController {
     private ChatController chatController;
     private StudyController studyController;
     private FocusController focusController;
+    private TodoController todoController;
     private SettingsController settingsController;
     private PauseTransition singleClickDelay;
     private PauseTransition sleepTimer;
@@ -243,11 +247,11 @@ public class MascotController {
             panelStage.show();
             panelStage.toFront();
         } catch (PanelLoadException e) {
-            throw new IllegalStateException("Could not open " + panel.name().toLowerCase() + " panel", e.getCause());
+            throw new IllegalStateException("Could not open " + panel.title().toLowerCase() + " panel", e.getCause());
         }
     }
 
-    /** Reopens the main Study / Focus / Chat / More menu from any panel. */
+    /** Reopens the main Focus / Study / Chat / More menu from any panel. */
     public void returnToMainMenu() {
         noteActivity();
         hideBubble();
@@ -261,6 +265,7 @@ public class MascotController {
                 case CHAT -> loadChatPanel();
                 case STUDY -> loadStudyPanel();
                 case FOCUS -> loadFocusPanel();
+                case TODO -> loadTodoPanel();
                 case SETTINGS -> loadSettingsPanel();
             };
         } catch (IOException e) {
@@ -279,7 +284,7 @@ public class MascotController {
         return view;
     }
 
-    /** Opens Focus after the chat focus option built a plan. */
+    /** Opens Study after the chat option built a plan. */
     private void openFocusPanel() {
         openPanel(Panel.FOCUS);
         if (focusController != null) {
@@ -306,6 +311,16 @@ public class MascotController {
         return view;
     }
 
+    private Parent loadTodoPanel() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/todo.fxml"));
+        Parent view = loader.load();
+        todoController = loader.getController();
+        todoController.attach(services.todoService(), services.taskRefinementService(),
+                services.threadManager().executor(), this::closePanel, this::collapseToMascot,
+                this::returnToMainMenu);
+        return view;
+    }
+
     private Parent loadSettingsPanel() throws IOException {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/settings.fxml"));
         Parent view = loader.load();
@@ -324,12 +339,13 @@ public class MascotController {
         card.getStyleClass().add("more-menu");
         card.setAlignment(Pos.CENTER);
         card.getChildren().add(new Label("More"));
-        card.getChildren().add(menuItem("Focus planner", () -> openPanel(Panel.FOCUS)));
+        card.getChildren().add(menuItem("Study", () -> openPanel(Panel.FOCUS)));
         card.getChildren().add(menuItem("Settings", () -> openPanel(Panel.SETTINGS)));
         card.getChildren().add(menuItem("Chat history", () -> {
             openPanel(Panel.CHAT);
             chatController.showHistory();
         }));
+        card.getChildren().add(menuItem("To-do list", () -> openPanel(Panel.TODO)));
         card.getChildren().add(menuItem("Help / About", this::showAbout));
         card.getChildren().add(menuItem("Collapse to mascot", this::collapseToMascot));
         card.getChildren().add(menuItem("Back to menu", this::showMainMenu));
@@ -365,7 +381,7 @@ public class MascotController {
         hideActivePanelStage();
         activePanel = null;
         menuHost.getChildren().setAll(mainMenu);
-        showMenu(MENU_WIDTH, MENU_BAR_HEIGHT);
+        showMenu(MAIN_MENU_WIDTH, MENU_BAR_HEIGHT);
     }
 
     private void closePanel() {
@@ -425,7 +441,7 @@ public class MascotController {
     }
 
     private Stage createPanelStage(Panel panel, Parent content) {
-        Stage panelStage = createAuxiliaryStage(content, panel.name(), false);
+        Stage panelStage = createAuxiliaryStage(content, panel.title(), false);
         panelStage.setOnCloseRequest(event -> {
             if (!closed) {
                 event.consume();
@@ -478,6 +494,10 @@ public class MascotController {
                 preferredWidth = focusWidth;
                 preferredHeight = focusHeight;
             }
+            case TODO -> {
+                preferredWidth = TODO_PREFERRED_WIDTH;
+                preferredHeight = TODO_PREFERRED_HEIGHT;
+            }
             case CHAT -> {
                 if (expanded) {
                     preferredWidth = availableWidth;
@@ -498,11 +518,11 @@ public class MascotController {
 
         double x = switch (panel) {
             case STUDY -> bounds.getMaxX() - width - SCREEN_EDGE_MARGIN;
-            case CHAT, FOCUS, SETTINGS -> bounds.getMinX() + (bounds.getWidth() - width) / 2;
+            case CHAT, FOCUS, TODO, SETTINGS -> bounds.getMinX() + (bounds.getWidth() - width) / 2;
         };
         double y = switch (panel) {
             case STUDY -> bounds.getMinY() + SCREEN_EDGE_MARGIN;
-            case CHAT, FOCUS, SETTINGS -> bounds.getMinY() + (bounds.getHeight() - height) / 2;
+            case CHAT, FOCUS, TODO, SETTINGS -> bounds.getMinY() + (bounds.getHeight() - height) / 2;
         };
         panelStage.setX(clamp(x, bounds.getMinX(), Math.max(bounds.getMinX(), bounds.getMaxX() - width)));
         panelStage.setY(clamp(y, bounds.getMinY(), Math.max(bounds.getMinY(), bounds.getMaxY() - height)));
@@ -864,10 +884,21 @@ public class MascotController {
     }
 
     private enum Panel {
-        CHAT,
-        STUDY,
-        FOCUS,
-        SETTINGS
+        CHAT("Chat"),
+        STUDY("Focus"),
+        FOCUS("Study"),
+        TODO("To-do list"),
+        SETTINGS("Settings");
+
+        private final String title;
+
+        Panel(String title) {
+            this.title = title;
+        }
+
+        private String title() {
+            return title;
+        }
     }
 
     private static final class PanelLoadException extends RuntimeException {

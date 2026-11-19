@@ -9,6 +9,7 @@ import com.puppy.model.DocumentAttachment;
 import com.puppy.model.FocusContext;
 import com.puppy.model.FocusEditResult;
 import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusPlanDraft;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.model.StoredMessage;
@@ -82,7 +83,7 @@ public class ChatController {
      */
     enum ComposerMode {
         CHAT("Chat"),
-        FOCUS("Focus plan"),
+        FOCUS("Study"),
         ADJUST("Adjust plan"),
         HELP("Help");
 
@@ -183,6 +184,8 @@ public class ChatController {
     private int attachmentGeneration;
     private Future<?> inFlight;
     private PendingFocus pendingFocus;
+    private FocusPlanDraft pendingFocusDraft;
+    private HBox pendingDraftActions;
     private FocusPreferences pendingPreferences;
     private ChatHistoryService chatHistory;
     private String currentConversationId = java.util.UUID.randomUUID().toString();
@@ -278,6 +281,12 @@ public class ChatController {
         messageInput.clear();
         stopMascotReaction();
 
+        if (pendingFocusDraft != null && !message.isEmpty() && !message.startsWith("/")) {
+            handlePendingFocusDraft(message);
+            messageInput.requestFocus();
+            return;
+        }
+
         if (pendingFocus != null && !message.isEmpty() && !message.startsWith("/")) {
             answerPendingFocus(message);
             messageInput.requestFocus();
@@ -307,19 +316,10 @@ public class ChatController {
             case CHAT -> {
                 String chatMessage = message.isEmpty() ? ATTACHMENT_ONLY_PROMPT : message;
                 boolean hasPlan = focusService != null && !focusService.sessions().isEmpty();
-                if (hasPlan && isPlanDropSubjectIntent(chatMessage, focusService.subjects())) {
-                    addMessage("user", chatMessage, List.of());
-                    if (handleDropSubject(chatMessage)) {
-                        return;
-                    }
-                }
-                if (hasPlan && (isPlanHorizonIntent(chatMessage) || isPlanPriorityIntent(chatMessage, focusService.subjects()))) {
-                    addMessage("user", chatMessage, List.of());
-                    if (adjustPlanHorizonOrPriority(chatMessage)) {
-                        return;
-                    }
-                }
-                if (hasPlan && isPlanEditIntent(chatMessage, focusService.sessions())) {
+                if (hasPlan && (isPlanDropSubjectIntent(chatMessage, focusService.subjects())
+                        || isPlanHorizonIntent(chatMessage)
+                        || isPlanPriorityIntent(chatMessage, focusService.subjects())
+                        || isPlanEditIntent(chatMessage, focusService.sessions()))) {
                     addMessage("user", chatMessage, List.of());
                     startEditFocus(chatMessage);
                     messageInput.requestFocus();
@@ -430,7 +430,7 @@ public class ChatController {
                 Choose one option next to the message box, then press Send. The option
                 stays selected until you choose another one.
 
-                - **Focus plan** - read your pinned files or typed subject description
+                - **Study** - read your pinned files or typed subject description
                 - **Adjust plan** - change times, durations or subjects in the saved plan
                 - **Help** - show this list
 
@@ -444,7 +444,7 @@ public class ChatController {
                 Puppy gives every subject a review session and adds 50% extra time
                 (at least 30 minutes) to subjects you say are important, difficult or
                 need more time, so the other subjects are still scheduled.
-                A focus plan covers one week by default; say **in 10 days** or
+                A plan covers one week by default; say **in 10 days** or
                 **deadline 20/11** to choose a different end date.""";
     }
 
@@ -457,9 +457,9 @@ public class ChatController {
         if (description.equalsIgnoreCase("quick") || description.equalsIgnoreCase("deep")) {
             addMessage("user", input, List.of());
             addMessage("assistant", """
-                    Puppy now chooses **Quick** or **Deep** from your description, so there is
-                    no type to force. Tell me how the subject feels and which times you are free,
-                    for example **18:00-21:30**.""", List.of());
+                    Tell me the subjects to include or attach a timetable, and I'll build a
+                    **plan**. You can also give a free-time window, for example
+                    **18:00-21:30**.""", List.of());
             scrollToBottom();
             mascotStateService.resetToIdle();
             return;
@@ -468,29 +468,29 @@ public class ChatController {
     }
 
     /**
-     * Starts a focus request from the pinned files and an optional typed
-     * description. Puppy infers Quick or Deep focus from that description.
+     * Starts a Study request from the pinned files and an optional typed
+     * description.
      *
      * <p>The planner only runs once a free-time window is known. The window is
      * parsed from the typed description, never from a pinned timetable, because
      * class times are not free time. When no range is present, Puppy keeps the
-     * request pending and asks for the window before opening Focus Planner.</p>
+     * request pending and asks for the window before opening Study.</p>
      *
      * @return {@code true} when the request was accepted
      */
     private boolean startFocus(String description) {
         String typed = description == null ? "" : description.strip();
         if (typed.isEmpty() && attachments.isEmpty()) {
-            addMessage("user", "Focus plan", List.of());
+            addMessage("user", "Study", List.of());
             addMessage("assistant", focusHelpText(), List.of());
             scrollToBottom();
             mascotStateService.resetToIdle();
             return false;
         }
         if (focusService == null) {
-            addMessage("user", typed.isEmpty() ? "Focus plan" : typed, List.of());
+            addMessage("user", typed.isEmpty() ? "Study" : typed, List.of());
             addMessage("assistant",
-                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+                    "Study isn't available right now. Try restarting Puppy.", List.of());
             scrollToBottom();
             return false;
         }
@@ -498,21 +498,15 @@ public class ChatController {
         List<String> fileNames = attachments.stream()
                 .map(DocumentAttachment::fileName)
                 .toList();
-        addMessage("user", typed.isEmpty() ? "Focus plan" : typed, fileNames);
+        addMessage("user", typed.isEmpty() ? "Study" : typed, fileNames);
 
         boolean hasExistingPlan = !focusService.sessions().isEmpty();
         boolean hasAttachments = !attachments.isEmpty();
-        if (hasExistingPlan && !hasAttachments && isPlanDropSubjectIntent(typed, focusService.subjects())) {
-            if (handleDropSubject(typed)) {
-                return true;
-            }
-        }
-        if (hasExistingPlan && !hasAttachments && (isPlanHorizonIntent(typed) || isPlanPriorityIntent(typed, focusService.subjects()))) {
-            if (adjustPlanHorizonOrPriority(typed)) {
-                return true;
-            }
-        }
-        if (hasExistingPlan && !hasAttachments && isPlanEditIntent(typed, focusService.sessions())) {
+        if (hasExistingPlan && !hasAttachments
+                && (isPlanDropSubjectIntent(typed, focusService.subjects())
+                || isPlanHorizonIntent(typed)
+                || isPlanPriorityIntent(typed, focusService.subjects())
+                || isPlanEditIntent(typed, focusService.sessions()))) {
             return startEditFocus(typed);
         }
 
@@ -549,7 +543,7 @@ public class ChatController {
             pendingFocus = null;
             addMessage("user", message, List.of());
             addMessage("assistant",
-                    "Okay, I cancelled that focus plan. Send a new description whenever you're ready.",
+                    "Okay, I cancelled that plan. Send a new description whenever you're ready.",
                     List.of());
             scrollToBottom();
             mascotStateService.resetToIdle();
@@ -583,25 +577,9 @@ public class ChatController {
         pendingPreferences = window;
     }
 
-    private void confirmFreeTime(FocusPreferences window) {
-        StringBuilder confirmation = new StringBuilder("Got it - I'll schedule inside **")
-                .append(FocusFormats.formatTime(window.earliest()))
-                .append(" - ")
-                .append(FocusFormats.formatTime(window.latest()))
-                .append("**");
-        if (window.planUntil() != null) {
-            confirmation.append(", with the plan ending **")
-                    .append(FocusFormats.formatDate(window.planUntil()))
-                    .append("**");
-        }
-        confirmation.append(". Say **change time to 18:00-22:00** or use "
-                + "**Change time** in Focus Planner to update it.");
-        addMessage("assistant", confirmation.toString(), List.of());
-    }
-
     /**
      * Runs extraction on the pinned files plus the typed description. The model
-     * decides Quick or Deep focus for every task.
+     * extracts the timetable, tasks and subjects; the planner does the scheduling.
      */
     private boolean startFocusDocuments(String description) {
         List<DocumentAttachment> requestAttachments = new ArrayList<>(attachments);
@@ -635,19 +613,13 @@ public class ChatController {
                     if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
                         return;
                     }
-                    if (requestPreferences != null) {
-                        focusService.setPreferences(requestPreferences);
-                        Platform.runLater(() -> {
-                            if (generation == responseGeneration) {
-                                confirmFreeTime(requestPreferences);
-                            }
-                        });
-                    }
-                    FocusPlan plan = focusService.importDocuments(requestDocuments);
-                    Platform.runLater(() -> completeFocusCommand(generation, plan));
+                    FocusPlanDraft draft = focusService.previewDocuments(
+                            requestDocuments, requestPreferences);
+                    Platform.runLater(() -> completeFocusPreview(generation, draft,
+                            requestPreferences));
                 } catch (FocusPlanningException e) {
                     String message = e.getMessage() == null || e.getMessage().isBlank()
-                            ? "I couldn't build a focus plan from those files."
+                            ? "I couldn't build a plan from those files."
                             : e.getMessage();
                     Platform.runLater(() -> failFocusCommand(generation, message));
                 } catch (RuntimeException e) {
@@ -697,39 +669,165 @@ public class ChatController {
 
     private static String focusHelpText() {
         return """
-                **Focus needs a file or a description**
+                **Study needs a file or a description**
 
                 Pin your timetable, subject list or assignment sheet with the 📌 button, or type
-                the subjects you want planned. Then choose **Focus plan** and press Send.
+                the subjects you want planned. Then choose **Study** and press Send.
 
                 Tell me which subject needs more time - important, difficult, or not fully
                 mastered - and I'll lengthen its tasks without dropping the other subjects.
-                Light review and reading stay Quick.
                 If you don't mention a free-time window, I'll ask for one before planning.
                 Say **in 3 days**, **for 2 weeks** or **deadline 20/11** to set the plan
                 end; otherwise the plan covers one week.
 
                 Supported files: PDF, DOCX, DOC, TXT and MD. You can also build the plan by
-                hand in **Focus Planner**.""";
+                hand in **Study**.""";
     }
 
-    private void completeFocusCommand(int generation, FocusPlan plan) {
+    private void completeFocusPreview(int generation, FocusPlanDraft draft,
+                                      FocusPreferences requestedPreferences) {
         if (generation != responseGeneration || !responding) {
             return;
         }
-        addMessage("assistant", focusPlanSummary(plan), List.of());
+        pendingFocusDraft = draft;
+        StringBuilder reply = new StringBuilder();
+        if (requestedPreferences != null) {
+            reply.append("I used the requested study window **")
+                    .append(FocusFormats.formatTime(requestedPreferences.earliest()))
+                    .append(" - ").append(FocusFormats.formatTime(requestedPreferences.latest()))
+                    .append("** for this preview.\n\n");
+        }
+        reply.append("## Study preview\n\n")
+                .append(focusPlanSummary(draft.plan()))
+                .append("\n\nNothing has been saved yet. Choose **Save plan** or **Cancel** below, ")
+                .append("or describe another change to refine this preview.");
+        MessageBubble bubble = addMessage("assistant", reply.toString(), List.of());
+        showDraftActions(bubble);
+        finishFocusResponse(false);
+    }
+
+    private void handlePendingFocusDraft(String message) {
+        addMessage("user", message, List.of());
+        if (isCancelReply(message)) {
+            cancelPendingFocusDraft();
+            return;
+        }
+        if (isConfirmReply(message)) {
+            confirmPendingFocusDraft();
+            return;
+        }
+        startEditFocus(message);
+    }
+
+    private static boolean isConfirmReply(String message) {
+        String key = FocusFormats.normalize(message);
+        return key.equals("confirm") || key.equals("save") || key.equals("accept")
+                || key.equals("ok") || key.equals("yes") || key.equals("dong y")
+                || key.equals("xac nhan") || key.equals("luu")
+                || key.equals("luu ke hoach");
+    }
+
+    private void confirmPendingFocusDraft() {
+        FocusPlanDraft draft = pendingFocusDraft;
+        if (draft == null) {
+            return;
+        }
+        setDraftActionsBusy(true);
+        responding = true;
+        thinkingLabel.setManaged(true);
+        thinkingLabel.setVisible(true);
+        updateComposerState();
+        mascotStateService.setState(MascotState.THINKING);
+        int generation = ++responseGeneration;
+        try {
+            inFlight = executor.submit(() -> {
+                try {
+                    FocusPlan saved = focusService.confirmDraft(draft);
+                    Platform.runLater(() -> completeDraftConfirmation(generation, saved));
+                } catch (FocusPlanningException | RuntimeException e) {
+                    Platform.runLater(() -> failFocusCommand(generation,
+                            e.getMessage() == null ? "The plan could not be saved." : e.getMessage()));
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            failFocusCommand(generation, "The app is shutting down; the plan was not saved.");
+        }
+    }
+
+    private void cancelPendingFocusDraft() {
+        if (pendingFocusDraft == null) {
+            return;
+        }
+        pendingFocusDraft = null;
+        clearDraftActions();
+        addMessage("assistant", "Preview cancelled. Your saved plan was not changed.",
+                List.of());
+        scrollToBottom();
+        mascotStateService.resetToIdle();
+        messageInput.requestFocus();
+    }
+
+    /** Adds the two explicit preview actions directly below the assistant reply. */
+    private void showDraftActions(MessageBubble bubble) {
+        clearDraftActions();
+        Button save = new Button("Save plan");
+        save.getStyleClass().add("primary-button");
+        save.setOnAction(event -> confirmPendingFocusDraft());
+        Button cancel = new Button("Cancel");
+        cancel.getStyleClass().add("quiet-button");
+        cancel.setOnAction(event -> cancelPendingFocusDraft());
+        HBox actions = new HBox(8, save, cancel);
+        actions.setAlignment(Pos.CENTER_LEFT);
+        actions.getStyleClass().add("draft-actions");
+        pendingDraftActions = actions;
+        bubble.column().getChildren().add(actions);
+        scrollToBottom();
+    }
+
+    private void clearDraftActions() {
+        if (pendingDraftActions == null) {
+            return;
+        }
+        if (pendingDraftActions.getParent() instanceof VBox parent) {
+            parent.getChildren().remove(pendingDraftActions);
+        }
+        pendingDraftActions = null;
+    }
+
+    private void setDraftActionsBusy(boolean busy) {
+        if (pendingDraftActions == null) {
+            return;
+        }
+        pendingDraftActions.getChildren().forEach(node -> node.setDisable(busy));
+    }
+
+    private void completeDraftConfirmation(int generation, FocusPlan saved) {
+        if (generation != responseGeneration || !responding) {
+            return;
+        }
+        pendingFocusDraft = null;
+        clearDraftActions();
+        MessageBubble bubble = addMessage("assistant",
+                "Plan saved with **" + saved.sessions().size()
+                        + " sessions**. Sessions remain pending until you start them.", List.of());
+        Button open = new Button("Open Study");
+        open.getStyleClass().add("primary-button");
+        open.setOnAction(event -> focusOpenAction.run());
+        bubble.column().getChildren().add(open);
+        finishFocusResponse(false);
+    }
+
+    private void finishFocusResponse(boolean openFocus) {
         responding = false;
         inFlight = null;
         thinkingLabel.setManaged(false);
         thinkingLabel.setVisible(false);
         updateComposerState();
         scrollToBottom();
-        if (!plan.sessions().isEmpty()) {
-            mascotStateService.setState(MascotState.TALKING);
-            talkingTransition.playFromStart();
+        mascotStateService.setState(MascotState.TALKING);
+        talkingTransition.playFromStart();
+        if (openFocus) {
             Platform.runLater(focusOpenAction);
-        } else {
-            mascotStateService.resetToIdle();
         }
         messageInput.requestFocus();
     }
@@ -742,6 +840,7 @@ public class ChatController {
         inFlight = null;
         thinkingLabel.setManaged(false);
         thinkingLabel.setVisible(false);
+        setDraftActionsBusy(false);
         updateComposerState();
         addMessage("assistant", message, List.of());
         scrollToBottom();
@@ -762,7 +861,7 @@ public class ChatController {
         if (focusService == null) {
             addMessage("user", typed.isEmpty() ? "Adjust plan" : typed, fileNames);
             addMessage("assistant",
-                    "Focus Planner isn't available right now. Try restarting Puppy.", List.of());
+                    "Study isn't available right now. Try restarting Puppy.", List.of());
             scrollToBottom();
             return;
         }
@@ -773,7 +872,7 @@ public class ChatController {
             addMessage("assistant", """
                     **There is no plan to adjust yet**
 
-                    Choose **Focus plan** to build one from your files or a description
+                    Choose **Study** to build one from your files or a description
                     first, then use **Adjust plan** to move, resize or rename sessions.""",
                     List.of());
             scrollToBottom();
@@ -794,7 +893,7 @@ public class ChatController {
 
     private static String adjustHelpText() {
         return """
-                **Adjust your focus plan**
+                **Adjust your plan**
 
                 Choose **Adjust plan**, describe the change, then press Send. For example:
 
@@ -802,12 +901,12 @@ public class ChatController {
                 - "Make the Physics sessions 75 minutes"
                 - "Change Wednesday's session to Chemistry"
                 - "Delete the Friday review"
-                - "Add a Deep focus Chemistry session on Saturday at 9:00"
+                - "Add a Chemistry session on Saturday at 9:00"
                 - "My free time is 18:00-22:00 from now on"
 
                 Every change is checked against your classes, your free-time
                 window and the rest of the plan before it is saved. You can undo
-                the last change in **Focus Planner**.""";
+                the last change in **Study**.""";
     }
 
     private boolean startEditFocus(String description) {
@@ -826,17 +925,21 @@ public class ChatController {
                     if (generation != responseGeneration || Thread.currentThread().isInterrupted()) {
                         return;
                     }
-                    FocusContext context = new FocusContext(
-                            focusService.currentPlan(),
-                            focusService.classes(),
-                            focusService.preferences(),
-                            focusService.preferencesConfigured());
+                    FocusPlanDraft currentDraft = pendingFocusDraft;
+                    FocusContext context = currentDraft == null
+                            ? new FocusContext(focusService.currentPlan(), focusService.classes(),
+                                    focusService.preferences(), focusService.preferencesConfigured())
+                            : new FocusContext(currentDraft.proposed().plan(),
+                                    currentDraft.proposed().classes().stream()
+                                            .map(com.puppy.model.FocusState.ClassEntry::value).toList(),
+                                    currentDraft.proposed().preferences(),
+                                    currentDraft.proposed().preferencesConfigured());
                     FocusEditResult result = focusPlanEditor.edit(context, description);
-
-                    if (!result.isEmpty()) {
-                        focusService.applyEdits(result.actions());
-                    }
-                    Platform.runLater(() -> completeFocusEdit(generation, result));
+                    FocusPlanDraft preview = result.isEmpty() ? currentDraft
+                            : currentDraft == null
+                                    ? focusService.previewEdits(result.actions(), result.summary())
+                                    : focusService.previewEdits(currentDraft, result.actions(), result.summary());
+                    Platform.runLater(() -> completeFocusEdit(generation, result, preview));
                 } catch (FocusPlanningException e) {
                     String message = e.getMessage() == null || e.getMessage().isBlank()
                             ? "I couldn't edit the plan based on your request."
@@ -864,7 +967,8 @@ public class ChatController {
         return true;
     }
 
-    private void completeFocusEdit(int generation, FocusEditResult result) {
+    private void completeFocusEdit(int generation, FocusEditResult result,
+                                   FocusPlanDraft preview) {
         if (generation != responseGeneration || !responding) {
             return;
         }
@@ -872,24 +976,23 @@ public class ChatController {
         if (!result.summary().isBlank()) {
             reply.append(result.summary());
         } else {
-            reply.append("I've updated your focus plan according to your request.");
+            reply.append("I've updated your plan according to your request.");
         }
-        FocusPlan plan = focusService.currentPlan();
-        if (!result.isEmpty()) {
-            reply.append("\n\n").append(focusPlanSummary(plan));
+        if (!result.isEmpty() && preview != null) {
+            pendingFocusDraft = preview;
+            reply.append("\n\n## Updated preview\n\n")
+                    .append(focusPlanSummary(preview.plan()))
+                    .append("\n\nChoose **Save plan** or **Cancel** below, or request another change.");
+        } else if (pendingFocusDraft != null) {
+            reply.append("\n\nThe current preview is unchanged. Choose **Save plan** or **Cancel** ")
+                    .append("below, or clarify the change.");
         }
 
-        addMessage("assistant", reply.toString().strip(), List.of());
-        responding = false;
-        inFlight = null;
-        thinkingLabel.setManaged(false);
-        thinkingLabel.setVisible(false);
-        updateComposerState();
-        scrollToBottom();
-        mascotStateService.setState(MascotState.TALKING);
-        talkingTransition.playFromStart();
-        Platform.runLater(focusOpenAction);
-        messageInput.requestFocus();
+        MessageBubble bubble = addMessage("assistant", reply.toString().strip(), List.of());
+        if (pendingFocusDraft != null) {
+            showDraftActions(bubble);
+        }
+        finishFocusResponse(false);
     }
 
     static boolean isPlanHorizonIntent(String text) {
@@ -1106,26 +1209,22 @@ public class ChatController {
         return mentionsSubject && mentionsTime;
     }
 
-    private static String focusPlanSummary(FocusPlan plan) {
-        StringBuilder summary = new StringBuilder("**Focus plan ready**\n\n");
+    static String focusPlanSummary(FocusPlan plan) {
+        StringBuilder summary = new StringBuilder("**Your plan is ready**\n\n");
         if (plan.sessions().isEmpty()) {
             summary.append("I couldn't place any sessions. Check the notes below, then adjust ")
-                    .append("your classes, deadlines or free time in Focus Planner.");
+                    .append("your classes, deadlines or free time in **Study**.");
         } else {
             summary.append(plan.sessions().size()).append(" sessions - ")
                     .append(formatMinutes(plan.totalMinutes())).append(" planned for ")
                     .append(plan.subjectCount()).append(" subjects.\n\n");
-            plan.sessions().stream().limit(8).forEach(session ->
+            plan.sessions().forEach(session ->
                     summary.append("- **").append(FocusFormats.formatDate(session.date()))
                             .append(" ").append(session.timeRange()).append("** - ")
                             .append(session.subject()).append(": ")
-                            .append(session.title()).append(" (")
-                            .append(session.type().label()).append(")\n"));
-            if (plan.sessions().size() > 8) {
-                summary.append("- ...and ").append(plan.sessions().size() - 8)
-                        .append(" more in Focus Planner\n");
-            }
-            summary.append("\nI opened **Focus Planner** so you can start, tweak or add sessions.");
+                            .append(session.title()).append('\n'));
+            summary.append("\nReview every session above before saving. After saving, use ")
+                    .append("**Open Study** to start sessions manually.");
         }
         if (!plan.warnings().isEmpty()) {
             summary.append("\n\n**Notes**\n");
@@ -1566,6 +1665,8 @@ public class ChatController {
     private void newConversation() {
         cancelResponse();
         pendingFocus = null;
+        pendingFocusDraft = null;
+        clearDraftActions();
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();

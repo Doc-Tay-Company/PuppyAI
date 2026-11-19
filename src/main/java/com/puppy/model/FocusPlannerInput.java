@@ -1,8 +1,10 @@
 package com.puppy.model;
 
-import java.util.LinkedHashSet;
+import com.puppy.util.SubjectNames;
+
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Data the planner needs: fixed class times and the work that must be done.
@@ -34,25 +36,28 @@ public record FocusPlannerInput(
 
     /** All subjects mentioned by classes, tasks or extra-time requests, in first-seen order. */
     public List<String> subjects() {
-        return java.util.stream.Stream.concat(
+        Map<String, String> unique = new LinkedHashMap<>();
+        java.util.stream.Stream.concat(
                         java.util.stream.Stream.concat(
                                 classes.stream().map(ClassSlot::subject),
                                 tasks.stream().map(StudyTask::subject)),
                         moreTimeSubjects.stream())
-                .distinct()
-                .toList();
+                .filter(value -> value != null && !value.isBlank())
+                .forEach(value -> unique.putIfAbsent(
+                        SubjectNames.key(value), SubjectNames.canonical(value)));
+        return List.copyOf(unique.values());
     }
 
     private static List<String> cleanSubjects(List<String> values) {
         if (values == null || values.isEmpty()) {
             return List.of();
         }
-        Set<String> unique = new LinkedHashSet<>();
+        Map<String, String> unique = new LinkedHashMap<>();
         for (String value : values) {
             if (value != null && !value.isBlank()) {
-                unique.add(value.strip());
+                unique.putIfAbsent(SubjectNames.key(value), SubjectNames.canonical(value));
             }
         }
-        return List.copyOf(unique);
+        return List.copyOf(unique.values());
     }
 }

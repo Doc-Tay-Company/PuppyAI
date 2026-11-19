@@ -24,8 +24,8 @@ class MockChatResponderTest {
     }
 
     @Test
-    void recognisesStudyRequests() {
-        assertTrue(responder.replyTo("Can we study for a bit?").contains("STUDY"));
+    void recognisesFocusRequests() {
+        assertTrue(responder.replyTo("Can we focus for a bit?").contains("FOCUS"));
     }
 
     @Test

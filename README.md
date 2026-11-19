@@ -1,8 +1,9 @@
 # Puppy AI
 
 A desktop AI companion: a pixel-art puppy that lives on your desktop, chats with
-you, researches the web and runs study sessions. JavaFX frontend with pure Java
-services in a single desktop process — no Python, no separate server.
+you, researches the web, runs focus sessions and builds study plans. JavaFX
+frontend with pure Java services in a single desktop process — no Python, no
+separate server.
 
 **Implementation roadmap and status:** [Implementation Status](docs/IMPLEMENTATION_STATUS.md)
 is the single source of truth for scope, decisions, dependencies and acceptance
@@ -10,24 +11,23 @@ criteria. SQLite persistence is implemented. Supplemental chat instructions in
 Settings and interactive **Multiple Quiz** inside Chat remain planned; only the
 quiz-definition storage foundation exists so far.
 
-**Status: local and cloud AI chat plus Focus planning are wired up.** The app
+**Status: local and cloud AI chat plus Study are wired up.** The app
 launches as a frameless, transparent, always-on-top puppy. The mascot stays in
 its desktop window while the menu and feature panels open in separate windows.
-Click the puppy for a random message, double-click to open Study / Focus / Chat /
-More. After five idle minutes the puppy falls asleep; click it to wake it up.
-Chat streams Markdown replies from the selected model: **OpenRouter** in the
+Click the puppy for a random message, double-click to open Focus / Study /
+Chat / More. After five idle minutes the puppy falls asleep; click it to wake it
+up. Chat streams Markdown replies from the selected model: **OpenRouter** in the
 cloud when a key is configured, or the local **Ollama** model as a fallback.
-Puppy offers **Focus plan / Help / Chat** next to the message box; the chosen
-option stays active until another one is selected, and `/model` shows the active
-model. Chat can read pinned PDF, Word and text files into the conversation.
-Settings switches models live and stores the OpenRouter key only on this
-computer. Focus planning reads a
-pinned timetable or subject file, or a typed subject description, infers Quick
-or Deep focus from how you describe the subject, asks for your free-time window
-when it is missing, and builds a constraint-aware study plan while the Focus
-Planner panel supports hand-made classes, tasks and sessions. Chat, focus data
-and extracted attachments persist locally; cloud models need an internet connection and an
-OpenRouter key.
+Puppy offers **Chat / Study / Adjust plan / Help** next to the message box;
+the chosen option stays active until another one is selected, and `/model` shows
+the active model. Chat can read pinned PDF, Word and text files into the
+conversation. Settings switches models live and stores the OpenRouter key only on
+this computer. **Study** reads a pinned timetable or subject file, or a
+typed subject description, asks for your free-time window when it is missing,
+and builds a constraint-aware plan while the Study panel supports hand-made
+classes, tasks and sessions. The separate **Focus** panel runs the Pomodoro-style
+focus timer. Chat, Study data and extracted attachments persist locally;
+cloud models need an internet connection and an OpenRouter key.
 
 ## Requirements
 
@@ -145,18 +145,18 @@ mvn javafx:run        # launch Puppy
 | --- | --- |
 | Drag with left mouse button | Move the puppy around the desktop |
 | Click the puppy | Show a random, friendly message |
-| Double-click the puppy | Open or close the Study / Focus / Chat / More menu |
+| Double-click the puppy | Open or close the Focus / Study / Chat / More menu |
 | Idle for five minutes | Puppy falls asleep; click it to wake it up |
 | Every two minutes | Puppy may show a quiet notification while idle |
-| Study / Focus / Chat | Open the matching panel in a separate window without moving the mascot |
-| Menu (inside a panel) | Return to the Study / Focus / Chat / More menu |
+| Focus / Study / Chat | Open the matching panel in a separate window without moving the mascot |
+| Menu (inside a panel) | Return to the Focus / Study / Chat / More menu |
 | Expand / Restore (Chat) | Grow the chat into the monitor workspace or return to its normal size |
 | Attach | Add a PDF, Word document, TXT or Markdown file to the current chat |
-| Chat options | Choose Chat, Focus plan or Help beside the message box; the choice stays active until you pick another |
+| Chat options | Choose Chat, Study, Adjust plan or Help beside the message box; the choice stays active until you pick another |
 | Right-click a chat message | Copy it, or reuse it in the message box |
 | Ctrl+V in the message box | Paste copied text |
 | `/model` | Keyboard fallback to show the selected model and provider |
-| More | Open Focus Planner, Settings, session chat history, Help / About, collapse, or quit |
+| More | Open Study, Settings, session chat history, Help / About, collapse, or quit |
 | Settings | Switch between OpenRouter cloud models and the local model, and manage the OpenRouter key |
 | Escape | Close the current panel/menu and return to the puppy |
 | Right-click | Development menu: switch mascot states or quit |
@@ -173,8 +173,8 @@ Puppy uses embedded SQLite through JDBC; no database server is required.
 `-Dpuppy.dataDirectory=C:\path\to\data` or `PUPPY_DATA_DIRECTORY`.
 Use a local disk. Only one running Puppy instance can own a data directory.
 
-- Chat messages, reply timings, conversation attachments, Focus data/completion,
-  model choice and always-on-top survive restart. The last active chat reopens;
+- Chat messages, reply timings, conversation attachments, Study
+  data/completion, model choice and always-on-top survive restart. The last active chat reopens;
   history is ordered by recent activity. Greeting-only empty chats are not saved.
 - New chats receive a provisional title, then one additional AI request asks the
   selected model to paraphrase the first request. It does not include attachments.
@@ -197,7 +197,7 @@ Use a local disk. Only one running Puppy instance can own a data directory.
 - Deletion uses SQLite `secure_delete` with rollback journaling. This is best
   effort, **not a physical-erasure guarantee** on SSDs, filesystem snapshots or
   backups. Protect the data directory and any copies yourself.
-- Focus countdowns are not restored. Quiz storage saves definitions only, never
+- Focus timer countdowns are not restored. Quiz storage saves definitions only, never
   learner attempts, answers, progress or scores; quiz generation/UI is not yet
   implemented. New history-management/search/export UI is deferred.
 
@@ -209,8 +209,8 @@ Use a local disk. Only one running Puppy instance can own a data directory.
 | `HAPPY` | 2 | Positive reactions |
 | `THINKING` | 2 | Processing requests |
 | `TALKING` | 2 | Delivering responses |
-| `STUDYING` | 2 | Study mode |
-| `SLEEPING` | 2 | Five idle minutes without a panel or active study timer |
+| `STUDYING` | 2 | Focus timer active |
+| `SLEEPING` | 2 | Five idle minutes without a panel or active focus timer |
 
 `MascotSprites` owns the animation timing, `MascotAnimator` drives the frames,
 and `MascotStateService` is the single place the rest of the application asks
@@ -260,18 +260,18 @@ Infrastructure        SQLite/JDBC repositories, Ollama and OpenRouter HTTP clien
 | `MascotStateService` | Thread-safe current state with listener notifications |
 | `ChatService` | Builds the bounded prompt and streams replies from the selected model |
 | `ModelService` | Cloud-first model selection, runtime switching, key state and provider routing |
-| `FocusService` | Owns restored classes, tasks, preferences, current plan and manual-session validation; mutations persist before publication |
-| `FocusPlanner` | Deterministic scheduling: classes, free time, deadlines, subject fairness, breaks and block sizes |
+| `FocusService` | Study service: owns restored classes, tasks, preferences, current plan and manual-session validation; mutations persist before publication |
+| `FocusPlanner` | Deterministic Study scheduling: classes, free time, deadlines, subject fairness, breaks and block sizes |
 | `FocusPlanExtractor` | Reads timetable/task files; `AiFocusPlanExtractor` asks the selected model for strict JSON |
 | `ChatProvider` | Provider-neutral contract for streaming chat and JSON mode |
 | `OllamaClient` | Ollama `/api/chat` streaming, JSON mode, availability checks and friendly errors |
 | `OpenRouterClient` | OpenRouter `/chat/completions` SSE streaming, JSON mode, bearer-key header, redacted errors and cloud-friendly messages |
 | `ChatPromptBuilder` | Provider-neutral system prompt, document context and recent-history limits |
 | `DocumentTextExtractor` | PDF (PDFBox), DOCX/DOC (Apache POI), TXT and Markdown extraction |
-| `StudyTimer` | Timestamp-based Pomodoro countdown (25:00 focus / 5:00 break, test mode) |
+| `StudyTimer` | Timestamp-based Focus timer countdown (25:00 focus / 5:00 break, test mode) |
 | `MockChatResponder` | Legacy stand-in used by its unit test; no longer connected to the UI |
-| `ChatController` / `StudyController` | Streaming chat with attachments and the Pomodoro panel |
-| `FocusController` | Import, classes, tasks, manual sessions, plan list, countdown and completion |
+| `ChatController` / `StudyController` | Streaming chat with attachments and the Focus timer panel |
+| `FocusController` | Study: import, classes, tasks, manual sessions, plan list, countdown and completion |
 | `SettingsController` | Desktop settings, live model switching, model-aware OpenRouter key section and cloud/local status |
 | `ThreadManager` | Daemon worker pool for chat, attachments and future background work |
 
@@ -333,12 +333,14 @@ Persistence packages (`repository/`, `database/`) implement the storage tracked
 in the [implementation status](docs/IMPLEMENTATION_STATUS.md). Web research is
 outside the current feature scope.
 
-## Focus mode
+## Study and Focus timer
 
-Focus has two entry points: the **Focus plan** composer option in Chat with
-pinned files or a typed subject description, and the Focus Planner panel from
-the main menu or More. Both share one persisted `FocusService`, so a plan built
-in chat is immediately visible in the panel.
+**Study** has two entry points: the **Study** composer option in
+Chat with pinned files or a typed subject description, and the Study panel
+from the main menu or More. Both share one persisted `FocusService`; a Chat
+preview becomes visible in the panel only after explicit confirmation. The
+separate **Focus** panel is the Pomodoro-style timer (25-minute focus / 5-minute
+break) with start, pause and reset.
 
 ### How a plan is built
 
@@ -350,32 +352,33 @@ in chat is immediately visible in the panel.
    does not choose study times.
 3. If no free-time window is saved yet, Puppy asks for one before planning.
    Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or `7pm-9pm` are
-   accepted; the answer becomes the Focus free-time setting and later plans
-   reuse it. Change it any time by saying `change time to 18:00-22:00` in
-   **Adjust plan** or with **Change time** in Focus Planner. Timetable class
-   times are never mistaken for free time.
+   accepted; the answer becomes part of the preview and is saved only with a
+   confirmed plan. Later plans reuse it. Change it any time by saying
+   `change time to 18:00-22:00` in **Adjust plan** or with **Change time** in
+   Study. Timetable class times are never mistaken for free time.
 4. The plan covers one week by default. Say `trong 3 ngày`, `for 2 weeks`,
    `1 tháng` or give an appointment such as `deadline 20/11` to choose another
    end date; an explicit date wins over a duration.
 5. `FocusPlanner` deterministically places blocks using the rules below.
-6. The plan is summarized in chat and Focus Planner opens automatically when
-   sessions were created.
+6. Chat shows a validated preview without changing SQLite, with **Save plan**
+   and **Cancel** buttons at the end of the reply. Save it with the button,
+   request another natural-language change to refine the preview, or cancel it.
+   A saved-plan message includes **Open Study**.
 
-### Session types
+### Session length
 
-Puppy chooses the type from your description; there is no Quick/Deep selector
-in Chat.
+Focus-type classification is temporarily hidden: there is no Quick/Deep/Exam
+selector and no type badge in the Study or Chat preview. New tasks use one
+neutral 25-minute block, and the panel's **Max session** setting caps every
+session. Plans saved by older versions keep their stored type quietly so they
+still load and edit correctly.
 
-| Type | Default block | Use for |
-| --- | --- | --- |
-| Quick focus | 25 min | Light lecture review, reading, notes and flashcards |
-| Deep focus | 50 min | Important or difficult subjects, low confidence, programming, assignments and research |
-
-A task longer than its default block is split into equal blocks — a
-120-minute deep task becomes three 40-minute sessions, not 50 + 50 + 20. Every
-session carries its subject, date, start/end time, type and completion state.
-Priority is kept internally so Puppy can order the most important work first;
-it is not shown or chosen in the UI.
+Study also lets you configure the break between generated sessions
+and the maximum duration of a single session. These constraints are enforced by
+Java rather than delegated to the model. A task longer than its block is split
+into equal blocks. Every session carries its subject, date, start/end time and
+completion state. Priority is kept internally so Puppy can order the most
+important work first; it is not shown or chosen in the UI.
 
 ### Scheduling constraints
 
@@ -399,47 +402,54 @@ it is not shown or chosen in the UI.
 
 ### Import and manual editing
 
-- **Focus plan** schedules every subject found in the pinned files or typed
+- **Study** schedules every subject found in the pinned files or typed
   description. Saying a subject is important, difficult, needs more time, or is
   not fully mastered marks it for extra time: its tasks grow by 50% or 30
   minutes, whichever is larger, while the other subjects keep their normal
-  reviews. Light review, reading and notes stay Quick.
+  reviews.
 - If the description has no start and end time, Puppy reuses the window you
   already saved. A first plan asks **"When are you free?"** once; later plans
   skip the question. Say **change time to 18:00-22:00** in Adjust plan, or use
-  **Change time** in Focus Planner, to choose a different window. Saying
+  **Change time** in Study, to choose a different window. Saying
   `cancel` drops a pending request.
-- Every subject in a subject list gets its own "Review class notes" quick task,
+- Every subject in a subject list gets its own "Review class notes" task,
   even when other tasks exist. A timetable subject with no task at all gets the
   same review fallback. Reviews are due at the end of the default week
   (today + 6 days).
-- Imported classes merge with what is already loaded. Tasks merge by normalised
-  subject and title, so importing the same work again updates its duration or
-  deadline instead of adding a duplicate.
-- Focus Planner can add classes, tasks and one-off sessions by hand. A manual
-  session is rejected when it is in the past, outside free time, or overlaps a
-  class or another session.
-- Any session can be edited from its **Edit** button: subject, action, focus
-  type, date, start time and duration. **Apply to all sessions of subject**
+- Imported classes merge with what is already loaded. Vietnamese and English
+  names for the same subject settle on one English name, so "Toán" and "Math"
+  do not appear as separate subjects. Tasks merge by canonical subject and
+  title, so importing the same work again updates its duration or deadline
+  instead of adding a duplicate.
+- The Study panel can add classes, tasks and one-off sessions by hand. A
+  manual session is rejected when it is in the past, outside free time, or
+  overlaps a class or another session.
+- Any session can be edited from its **Edit** button: subject, action, date,
+  start time and duration. **Apply to all sessions of subject**
   copies those fields to the subject's other sessions while keeping each date,
   title and completion state. Saving re-checks the free-time window, class times
   and every other session that day, ignores the session's own old time, and
   preserves its completion state. **Cancel edit** leaves it untouched.
-- **Undo** below the session list reverts the last hand-made or AI change.
+- **Undo** below the session list reverts the last hand-made or AI change,
+  including task metadata and study-window settings.
   Generate plan and Import ask before replacing edited sessions; **Clear plan**
   resets everything without asking.
-- Sessions support Start / Pause / Resume, a live countdown, Finish / Done and
+- Sessions persist Pending / Active / Paused / Completed / Skipped states and
+  support Start / Pause / Resume, a live countdown, Finish / Done / Skip and
   Remove. A running Focus timer keeps the mascot awake.
 
-Focus data survives restart. **Generate plan** rebuilds the scheduled session
-list from the current classes and tasks; hand-made sessions are not carried into
-a new generation. Restart preserves past sessions/completion but never resumes a countdown.
+Study data survives restart. **Generate plan** rebuilds the scheduled
+session list from the current classes and tasks. Completed and skipped sessions
+remain as study history and completed minutes are not scheduled again. Restart
+preserves history and converts an interrupted Active state to Paused, but never
+resumes a countdown automatically.
 
 ## Chat, attachments and model switching
 
-The app follows the mascot → menu → Study / Focus / Chat / More flow. The mascot
-stays in its fixed desktop window while the menu and feature panels use separate
-windows. Chat, Study, Focus and Settings views are cached between openings.
+The app follows the mascot → menu → Focus / Study / Chat / More flow. The
+mascot stays in its fixed desktop window while the menu and feature panels use
+separate windows. Chat, Focus, Study and Settings views are cached between
+openings.
 
 - **Chat** opens centered on the primary screen in a roomy window with an
   Expand / Restore toggle. Replies stream from the selected model on the shared
@@ -456,15 +466,15 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
   small **Copy** and **Reuse** buttons below the bubble. Reuse puts the exact
   request back in the composer without sending it, and normal **Ctrl+V** pastes
   clipboard text into the message box.
-- **Commands and focus** use the option beside the message box instead of typing
-  slash commands. **Focus plan** reads pinned files or the typed description,
-  infers Quick or Deep focus from it, and asks for a free-time window only when
-  none is saved. **Adjust plan** turns a request such as "move Math to tomorrow
-  at 19:00", "make the Physics sessions 75 minutes", "change Wednesday to
-  Chemistry", "delete the Friday review", or "my free time is 18:00-22:00" into
-  structured plan edits. Every edit is checked against classes, free time and
-  other sessions, applied all-or-nothing, and can be undone in Focus Planner.
-  The selected option stays active after every reply and choosing another one
+- **Commands and planning** use the option beside the message box instead of
+  typing slash commands. **Study** reads pinned files or the typed
+  description and asks for a free-time window only when none is saved.
+  **Adjust plan** turns a request such as "move Math to tomorrow at 19:00",
+  "make the Physics sessions 75 minutes", "change Wednesday to Chemistry",
+  "delete the Friday review", or "my free time is 18:00-22:00" into structured
+  plan edits. Every edit is checked against classes, free time and other
+  sessions, applied all-or-nothing, and can be undone in Study. The
+  selected option stays active after every reply and choosing another one
   replaces it. **Help** lists the options and answers locally; `/model` still
   shows the exact model, provider and whether it is cloud or local.
 - **Sessions** support a highlighted active conversation, a scrollable history,
@@ -485,21 +495,21 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
   `ollama pull` command), a missing or rejected OpenRouter key, credits,
   quota/rate limits, network failures, timeouts and damaged files are shown in
   the chat without stack traces. The OpenRouter key is never echoed in an error.
-- **Study** keeps the 25-minute focus / 5-minute break timer with
+- **Focus** keeps the 25-minute focus / 5-minute break timer with
   start/pause/reset and focus/break completion feedback.
-- **Focus** plans around classes, deadlines and free time with Quick (25 min) and
-  Deep (50 min) sessions, lets you edit or create sessions, then runs a countdown
-  for the selected session.
+- **Study** plans around classes, deadlines and free time, lets you edit or
+  create sessions, then runs a countdown for the selected session. Focus-type
+  selectors and badges are hidden for now; new tasks use one neutral block.
 - **Settings** switches between OpenRouter cloud models and the local model,
   shows a cloud/local indicator, and reveals a masked OpenRouter key section
   directly below the picker only while a cloud model is selected. Cloud models
   stay listed before a key exists; with no saved choice, a key defaults to
   Gemini 2.5 Flash. The local model needs no key.
-- **More** offers Focus Planner, Settings, session chat history, Help / About,
+- **More** offers Study, Settings, session chat history, Help / About,
   collapse-to-mascot and Quit.
 
-Chat history, extracted attachments, Focus data, model choice and desktop settings
-persist in SQLite; the OpenRouter key remains a separate local file. A true hide-to-tray option is deferred;
+Chat history, extracted attachments, Study data, model choice and desktop
+settings persist in SQLite; the OpenRouter key remains a separate local file. A true hide-to-tray option is deferred;
 “Hide/show” safely collapses the expanded shell to the mascot.
 
 `StudyTimer` remains pure Java; `StudyController` owns the JavaFX ticker and
@@ -534,13 +544,13 @@ read it yet.
 | Clean exit | `Application.stop()` → `ServiceRegistry.close()` |
 
 Known limitations: JavaFX receives mouse input across the full window rectangle,
-including transparent pixels. Chat history, extracted attachments, Focus plans,
+including transparent pixels. Chat history, extracted attachments, study plans,
 model choice and always-on-top persist locally. A system tray, custom instructions
 editor and true hide/show behavior are future work.
-Focus extraction uses the selected model, so cloud extraction needs a working
-key and internet connection while local extraction needs Ollama running. Combined
-document context is capped at 24,000 characters, and the planner defaults to a
-one-week horizon (overridable per request, capped at one year). Regenerating a
-plan replaces the scheduled session list,
+Study extraction uses the selected model, so cloud extraction needs a
+working key and internet connection while local extraction needs Ollama running.
+Combined document context is capped at 24,000 characters, and the planner
+defaults to a one-week horizon (overridable per request, capped at one year).
+Regenerating a plan replaces the scheduled session list,
 including hand-made sessions. The local key file is user-scoped but not
 encrypted at rest.

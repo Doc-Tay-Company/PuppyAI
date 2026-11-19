@@ -7,6 +7,7 @@ import com.puppy.model.ClassSlot;
 import com.puppy.model.FocusEditAction;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
+import com.puppy.model.StudyTask;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -181,6 +182,42 @@ class FocusServiceEditActionTest {
         assertEquals(LocalTime.of(20, 0), service.preferences().latest());
         assertTrue(service.preferencesConfigured());
         assertEquals(2, service.sessions().size());
+    }
+
+    @Test
+    void editsBreakLimitModeAndDurableTasksAtomically() throws Exception {
+        FocusService service = new FocusService(
+                docs -> null, new DocumentTextExtractor(), CLOCK);
+        service.addTask(new StudyTask("Math", "Review", FocusType.QUICK, 25,
+                TODAY.plusDays(2), Priority.MEDIUM));
+        service.addSession(FocusService.newManualSession(
+                "Math", "Review", FocusType.QUICK,
+                TODAY.plusDays(1), LocalTime.of(9, 0), 25));
+
+        service.applyEdits(List.of(
+                new FocusEditAction(FocusEditAction.Type.CHANGE_TYPE, 1,
+                        null, null, FocusType.EXAM, null, null, null, null),
+                FocusEditAction.setBreak(15),
+                FocusEditAction.setSessionLimit(60),
+                new FocusEditAction(FocusEditAction.Type.PRIORITIZE_SUBJECT, 0,
+                        "Math", null, null, null, null, null, Priority.HIGH),
+                new FocusEditAction(FocusEditAction.Type.ADD_TASK, 0,
+                        "Chemistry", "Review acids", FocusType.QUICK,
+                        TODAY.plusDays(2), LocalTime.of(11, 0), 25, Priority.MEDIUM)));
+
+        assertEquals(15, service.preferences().breakMinutes());
+        assertEquals(60, service.preferences().maxSessionMinutes());
+        assertEquals(FocusType.EXAM, service.sessions().stream()
+                .filter(session -> session.subject().equals("Math"))
+                .findFirst().orElseThrow().type());
+        assertTrue(service.tasks().stream().anyMatch(task ->
+                task.subject().equals("Chemistry") && task.title().equals("Review acids")));
+        assertTrue(service.tasks().stream().filter(task -> task.subject().equals("Math"))
+                .allMatch(task -> task.priority() == Priority.HIGH));
+
+        assertTrue(service.undoLastEdit());
+        assertEquals(1, service.tasks().size(), "Undo must restore task metadata too");
+        assertEquals(10, service.preferences().breakMinutes());
     }
 
     @Test

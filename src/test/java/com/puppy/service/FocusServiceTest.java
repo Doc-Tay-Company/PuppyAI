@@ -128,6 +128,54 @@ class FocusServiceTest {
     }
 
     @Test
+    void mergesVietnameseAndEnglishSubjectNamesAcrossImports() throws Exception {
+        AtomicReference<FocusExtraction> reply = new AtomicReference<>();
+        FocusService service = service(documents -> reply.get());
+
+        reply.set(extraction(
+                List.of(new ClassSlot("Toán", DayOfWeek.MONDAY,
+                        time(9, 0), time(10, 0))),
+                List.of(task("Toán", "Read notes", FocusType.QUICK,
+                        25, TODAY.plusDays(2)))));
+        service.importDocuments(List.of(attachment("math-vi.txt")), null);
+
+        reply.set(extraction(
+                List.of(new ClassSlot("Math", DayOfWeek.MONDAY,
+                        time(9, 0), time(10, 0))),
+                List.of(task("Math", "Read notes", FocusType.QUICK,
+                        50, TODAY.plusDays(3)))));
+        service.importDocuments(List.of(attachment("math-en.txt")), null);
+
+        assertEquals(1, service.classes().size(),
+                "The same class must not be duplicated in another language");
+        assertEquals("Math", service.classes().get(0).subject(),
+                "The plan should settle on the English subject style");
+        assertEquals(1, service.tasks().size(),
+                "The same task must be updated instead of duplicated");
+        assertEquals("Math", service.tasks().get(0).subject());
+        assertEquals(50, service.tasks().get(0).estimatedMinutes());
+        assertEquals(List.of("Math"), service.subjects());
+    }
+
+    @Test
+    void keepsOneDisplayNameWhenOneImportMixesBothLanguages() throws Exception {
+        FocusService service = service(documents -> extraction(
+                List.of(
+                        new ClassSlot("Toán", DayOfWeek.MONDAY, time(9, 0), time(10, 0)),
+                        new ClassSlot("Math", DayOfWeek.MONDAY, time(9, 0), time(10, 0))),
+                List.of(
+                        task("Toán", "Read notes", FocusType.QUICK, 25, TODAY.plusDays(2)),
+                        task("Math", "Read notes", FocusType.QUICK, 50, TODAY.plusDays(3)))));
+
+        service.importDocuments(List.of(attachment("mixed.txt")), null);
+
+        assertEquals(1, service.classes().size(), service.classes().toString());
+        assertEquals(1, service.tasks().size(), service.tasks().toString());
+        assertEquals("Math", service.classes().get(0).subject());
+        assertEquals("Math", service.tasks().get(0).subject());
+    }
+
+    @Test
     void addsAReviewTaskForANewTimetableSubjectWhenOtherTasksExist() throws Exception {
         AtomicReference<FocusExtraction> reply = new AtomicReference<>();
         FocusService service = service(documents -> reply.get());

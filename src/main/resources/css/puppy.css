@@ -227,6 +227,10 @@
     -fx-padding: 0 4;
 }
 
+.draft-actions {
+    -fx-padding: 2 3 0 3;
+}
+
 .message-action {
     -fx-background-color: transparent;
     -fx-background-radius: 8;
@@ -526,7 +530,7 @@
     -fx-padding: 10;
 }
 
-/* Focus planner --------------------------------------------------------- */
+/* Study ---------------------------------------------------------------- */
 
 .focus-panel {
     -fx-background-color: #d5dbe2;
@@ -665,24 +669,108 @@
     -fx-font-weight: bold;
 }
 
-.focus-type-quick {
-    -fx-background-color: #e6effa;
-    -fx-text-fill: #3d628d;
-}
-
-.focus-type-deep {
-    -fx-background-color: #f1e6f8;
-    -fx-text-fill: #6b3f88;
-}
-
 .focus-completed-badge {
     -fx-background-color: #e5f2e9;
     -fx-text-fill: #3e765e;
 }
 
+.focus-pending-badge {
+    -fx-background-color: #eceff3;
+    -fx-text-fill: #5d6875;
+}
+
+.focus-active-badge {
+    -fx-background-color: #fee7c9;
+    -fx-text-fill: #9a4f13;
+}
+
+.focus-paused-badge {
+    -fx-background-color: #fff3c4;
+    -fx-text-fill: #80650b;
+}
+
+.focus-skipped-badge {
+    -fx-background-color: #ece7e2;
+    -fx-text-fill: #78675a;
+}
+
 .focus-warning {
     -fx-font-size: 11px;
     -fx-text-fill: #b3452f;
+}
+
+/* To-do and AI task refinement ----------------------------------------- */
+
+.todo-panel {
+    -fx-background-color: #d5dbe2;
+    -fx-background-radius: 20;
+    -fx-padding: 12;
+}
+
+.todo-split,
+.todo-split > .split-pane-divider,
+.todo-scroll,
+.todo-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+}
+
+.todo-split > .split-pane-divider {
+    -fx-padding: 0 3;
+}
+
+.todo-column {
+    -fx-background-color: #fff0e2;
+    -fx-background-radius: 14;
+    -fx-padding: 10;
+}
+
+.todo-column .text-field,
+.todo-column .text-area,
+.todo-column .combo-box {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 9;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 9;
+}
+
+.todo-item {
+    -fx-background-color: #fffaf5;
+    -fx-background-radius: 10;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
+    -fx-padding: 7;
+}
+
+.todo-item-completed {
+    -fx-opacity: 0.62;
+}
+
+.todo-item-completed .todo-task-title {
+    -fx-strikethrough: true;
+}
+
+.todo-task-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #4a2d1d;
+}
+
+.refinement-message {
+    -fx-background-radius: 10;
+    -fx-padding: 6 8;
+    -fx-text-fill: #4a2d1d;
+}
+
+.refinement-user {
+    -fx-background-color: #f9d9bd;
+}
+
+.refinement-assistant {
+    -fx-background-color: #fffaf5;
+    -fx-border-color: #ead4c4;
+    -fx-border-radius: 10;
 }
 
 /* Right-click menu remains available as a development fallback. */

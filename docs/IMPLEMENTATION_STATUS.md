@@ -142,12 +142,12 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 - `ChatPromptBuilder` already supplies a fixed Puppy persona, document rules
   and bounded history in one leading system message. `AiFocusPlanExtractor` has
   its own fixed JSON contract. Both providers support `ModelService.jsonChat`.
-- Chat offers Chat / Focus plan / Adjust plan / Help. The selected option stays
+- Chat offers Chat / Study / Adjust plan / Help. The selected option stays
   active after every reply and choosing another option replaces it; Model is
   available through the `/model` command. Adjust plan applies validated,
   all-or-nothing MOVE / RESIZE / REMOVE / CHANGE_SUBJECT / ADD / SET_WINDOW edits
-  and the last change can be undone in Focus Planner. No quiz domain, service,
-  generation/parser, interactive card or persistence exists. Study is currently
+  and the last change can be undone in Study. No quiz domain, service,
+  generation/parser, interactive card or persistence exists. Focus is currently
   a Pomodoro timer, not a quiz engine.
 - Existing coverage includes provider clients, settings, bounded prompts,
   document extraction, Focus services/planner, timers and JavaFX layouts.
@@ -163,14 +163,14 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 | Focus persistence | Save classes, tasks, preferences, the current plan, warnings/generated date and session completion. Keep existing scheduling and regeneration semantics. |
 | Settings | Migrate non-secret settings to SQLite, including model choice; persist always-on-top and supplemental chat instructions. Keep the API key in its existing separate secret file and preserve environment-key precedence. |
 | Instructions | Add user instructions on top of, not instead of, the fixed Puppy persona. They must not take precedence over application rules. Keep document rules and structured Focus/Quiz contracts application-controlled. |
-| Quiz entry | Add **Multiple Quiz** alongside Focus plan in the Chat composer. All quiz setup, questions, feedback and review live in Chat; no separate Quiz panel or automatic Focus integration. |
+| Quiz entry | Add **Multiple Quiz** alongside Study in the Chat composer. All quiz setup, questions, feedback and review live in Chat; no separate Quiz panel or automatic Study integration. |
 | Quiz sources | Typed topic/description and/or the current chat's attached documents, using the selected local or cloud model. Existing attachment limits and cloud disclosure still apply. |
 | Quiz setup | Default **5 questions / Medium** without an extra setup round. Users specify **1-20** questions and difficulty in the chat request, including different difficulties for individual questions. |
 | Quiz questions | Single-answer multiple choice, exactly four options and one correct answer per question. Include an explanation and per-question difficulty. |
 | Interaction | Show one question at a time, with Previous/Next. Choose an option then Check answer; reveal the answer/explanation and lock that question. Unanswered questions can be skipped; final submission requires all questions answered. |
 | Scoring/retry | Score by the number of correct answers; final score and review. Retry reuses saved questions without another model call and starts a fresh attempt. |
 | Quiz persistence boundary | Save only quiz definitions: questions, options, correct answers, explanations, difficulty and their link to the chat. **Never persist attempts, user selections, scores, navigation position or progress**, including completed attempts. Every quiz restarts unanswered after app restart. Scores and review exist only in memory. |
-| Timers | No quiz timer. Do not restore running Study/Focus countdowns; persisted Focus completion is separate from countdown state. |
+| Timers | No quiz timer. Do not restore running Focus countdowns; persisted Study completion is separate from countdown state. |
 | Visual direction | Familiar interactive learning flow with original JavaFX components styled like Puppy AI; no external product assets or code. |
 | Failures | Surface database/generation/validation errors explicitly. Never silently reset a damaged database, report a failed save as successful, or substitute invented quiz content. |
 
@@ -304,7 +304,7 @@ suggested sequence, determine what can proceed independently.
   do not accidentally persist them as generic chat messages or score summaries.
 - Count/difficulty are supplied naturally in Chat, not a separate setup form.
   Requests can assign different difficulties to different questions. Existing
-  Chat, Focus plan, Help, Copy/Reuse and Markdown behavior remain intact.
+  Chat, Study, Adjust plan, Help, Copy/Reuse and Markdown behavior remain intact.
 - Follow existing cancellation behavior for generation on close/chat switch;
   late callbacks cannot attach a quiz to the wrong conversation. Test local and
   cloud generation manually without including private content or keys in logs.
@@ -320,7 +320,7 @@ unavailable live-provider verification as pending, not passed.
 ### Explicitly deferred
 
 Web research/Tavily, accounts/cloud sync, database encryption, search/export/
-retention-management UI, timer recovery, Study preset changes, automatic Focus
+retention-management UI, timer recovery, Focus preset changes, automatic Focus
 quiz integration, manual-session preservation on plan regeneration, and unrelated
 mascot/tray/packaging work are outside this feature set. Saving quiz attempts,
 progress or scores is intentionally excluded, not a missing persistence task.
@@ -332,9 +332,9 @@ progress or scores is intentionally excluded, not a missing persistence task.
 | 1 | Project foundation and JavaFX desktop shell | ✅ Complete |
 | 2 | Frontend interactions and UI | ✅ Complete |
 | 3 | SQLite persistence for chat, Focus, settings and quiz definitions | Complete - storage delivery and automated checks above; interactive quizzes remain milestone 6 |
-| 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Focus planner) | 🟡 In progress |
+| 4 | AI integration (local Ollama + cloud OpenRouter chat, document attachments, Study) | 🟡 In progress |
 | 5 | Internet research and extraction | Pending |
-| 6 | Study mode, settings, integration | Partial: Pomodoro/settings exist; supplemental instructions and Chat quizzes not started (PROMPT-1, QUIZ-1 through QUIZ-3) |
+| 6 | Focus timer, settings, integration | Partial: Pomodoro/settings exist; supplemental instructions and Chat quizzes not started (PROMPT-1, QUIZ-1 through QUIZ-3) |
 | 7 | Testing, optimization, packaging | Pending |
 
 ## Completed (milestone 1)
@@ -366,17 +366,17 @@ progress or scores is intentionally excluded, not a missing persistence task.
 - Tests: `StudyTimerTest` (11 cases, fake clock) and `MockChatResponderTest`.
 
 - Fixed bottom-right mascot window with separate menu and feature-panel windows.
-  Study opens top-right and Chat opens centered on the primary screen; opening
-  or resizing panels does not move the mascot.
-- Cached Chat, Study and Settings views plus More menu, Escape dismissal,
+  The Focus timer opens top-right and Chat opens centered on the primary screen;
+  opening or resizing panels does not move the mascot.
+- Cached Chat, Focus and Settings views plus More menu, Escape dismissal,
   close/minimize behavior and a right-click development fallback.
 - Chat uses mock replies on the shared worker pool, rejects blank input and
   offers new conversations with session-only history.
-- Study UI drives the existing 25/5 timer with start/pause/reset, phase labels
-  and completion feedback.
+- The Focus UI drives the existing 25/5 timer with start/pause/reset, phase
+  labels and completion feedback.
 - Settings exposes the functional in-session always-on-top switch. Model and
   OpenRouter key controls were added later in the AI milestone below.
-- `FxmlLayoutTest` loads all layouts and verifies the drag-safe menu, Study /
+- `FxmlLayoutTest` loads all layouts and verifies the drag-safe menu, Focus /
   Chat / Settings navigation, panel collapse, and blank-chat rejection.
 
 ## Completed (local AI chat and document attachments)
@@ -450,10 +450,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
   selecting a cloud model without a key reveals the key field. The Settings
   window recomputes its height when the section appears or hides so nothing
   clips.
-- **Chat and Focus:** the Model reply names the selected provider and whether it
-  is cloud or local. Errors distinguish a missing or rejected key, insufficient
-  credits, rate limits, blocked prompts and network failures.
-  `AiFocusPlanExtractor` asks the selected model for strict JSON, so Focus
+- **Chat and study planning:** the Model reply names the selected provider and
+  whether it is cloud or local. Errors distinguish a missing or rejected key,
+  insufficient credits, rate limits, blocked prompts and network failures.
+  `AiFocusPlanExtractor` asks the selected model for strict JSON, so study
   planning works through OpenRouter or Ollama while `FocusPlanner` still makes
   every scheduling decision.
 - **Tests:** `OpenRouterClientTest` covers SSE streaming, header-only keys, JSON
@@ -472,15 +472,15 @@ progress or scores is intentionally excluded, not a missing persistence task.
 
 ## Completed (mascot and chat polish)
 
-- **Navigation:** Chat, Study, Focus, Settings and submenus now have a Menu /
-  Back to menu action. Panel close and minimize still collapse to the desktop
-  mascot.
+- **Navigation:** Chat, Focus, Study, Settings and submenus now have a
+  Menu / Back to menu action. Panel close and minimize still collapse to the
+  desktop mascot.
 - **Hover and click:** the old hover bubble is gone. The mascot uses a hand
   cursor on hover and shows a random message from `MascotMessages` on click;
   single clicks wait briefly so double-click still opens the menu.
 - **Sleep:** after five minutes without app activity (and with no open panel,
-  menu or running Study/Focus timer) the mascot enters `SLEEPING`; clicking it
-  wakes the mascot, shows a wake line and restarts the inactivity timer.
+  menu or running Focus timer) the mascot enters `SLEEPING`; clicking it wakes
+  the mascot, shows a wake line and restarts the inactivity timer.
 - **Notifications:** while the mascot is idle and compact, a quiet random
   notification appears every two minutes and auto-hides after eight seconds.
 - **Chat size:** the chat window opens centered at up to 940 × 720 and has an
@@ -503,23 +503,27 @@ progress or scores is intentionally excluded, not a missing persistence task.
   “Copied”, and Reuse restores the exact request to the composer without sending
   it. Normal clipboard paste (**Ctrl+V**) remains available in the message box.
 - **Commands:** an option beside the message box selects what Send should do:
-  **Chat**, **Focus plan** or **Help**. The selected option stays active after
-  every reply and choosing another one replaces it, so it never has to be
-  reselected. Help answers locally; `/model` still shows the selected model and
-  provider. The 📌 button attaches documents, and the new-chat greeting ends at
-  “Ask me anything.” Focus has no Quick/Deep selector; Puppy infers the type
-  from the description and asks for a free-time window when one is missing.
+  **Chat**, **Study**, **Adjust plan** or **Help**. The selected option
+  stays active after every reply and choosing another one replaces it, so it
+  never has to be reselected. Help answers locally; `/model` still shows the
+  selected model and provider. The 📌 button attaches documents, and the
+  new-chat greeting ends at “Ask me anything.” Focus-type classification is
+  temporarily hidden: there is no Quick/Deep/Exam selector or badge, and new
+  tasks use one neutral block while older saved plans keep their stored type.
 - **Tests:** `MascotMessagesTest`, Markdown rendering and composer-option
   assertions in `FxmlLayoutTest`, the updated greeting contract in
   `ChatServiceTest`, and `DurationFormatsTest` for reply timing.
 
-## Completed (Focus planner)
+## Completed (Study)
 
-- **Domain model:** `FocusType` (Quick 25 min / Deep 50 min), `Priority`,
-  `ClassSlot`, `StudyTask`, `FocusPreferences`, `FocusSession`, `FocusPlan`,
-  `FocusPlannerInput` and `FocusExtraction`. Sessions carry subject, date,
-  start/end, type and a completion flag. Priority stays internal for ordering
-  and is not exposed in the UI.
+- **Domain model:** `FocusType` (legacy Quick 25 min / Deep 50 min / Exam
+  45 min), `Priority`, `ClassSlot`, `StudyTask`, `FocusPreferences`,
+  `FocusSession`, `FocusPlan`, `FocusPlannerInput` and `FocusExtraction`.
+  Sessions carry subject, date, start/end, type and a completion flag. The type
+  field remains persisted for compatibility but classification is temporarily
+  hidden from the UI: new tasks and sessions use one neutral stored type, and
+  older saved plans keep their original type. Priority stays internal for
+  ordering and is not exposed in the UI.
 - **Deterministic planning:** `FocusPlanner` schedules only inside the daily free
   window (default 08:00–22:00), subtracts weekly class times, respects
   deadlines, leaves 10-minute gaps, and queues work per subject. Pass 1 gives
@@ -533,12 +537,14 @@ progress or scores is intentionally excluded, not a missing persistence task.
   2026-12-01`; the horizon is capped at 365 days. Today's first session starts at
   least 15 minutes after the current time.
 - **Block sizing:** long tasks are split into equal blocks rather than one full
-  block plus a remainder; a 120-minute deep task becomes 3 × 40 minutes.
+  block plus a remainder; with the neutral 25-minute block, a 100-minute task
+  becomes 4 × 25 minutes. The stored type still supplies the internal block
+  length for older plans.
 - **Tolerant parsing:** `FocusFormats` reads `18:00`, `6h30`, `6h30 chieu`,
-  ISO and `20/11/2026` dates, English/Vietnamese weekdays, Quick/Deep keywords
-  (including importance, difficulty, extra time and low confidence → Deep),
-  priorities, durations such as `1h30`, `1.5h` and `45 phút`, and free-time
-  windows such as `18:00-21:30`, `7h tối - 9h tối` and `7pm-9pm`. Date-like
+  ISO and `20/11/2026` dates, English/Vietnamese weekdays, legacy Quick/Deep/Exam
+  keywords for compatibility with older saved plans, priorities, durations such
+  as `1h30`, `1.5h` and `45 phút`, and free-time windows such as `18:00-21:30`,
+  `7h tối - 9h tối` and `7pm-9pm`. Date-like
   number pairs are rejected so a deadline cannot become a study window.
   `parsePlanEnd` reads inclusive day/week/month durations, deadline/appointment
   dates, and `hôm nay` / `ngày mai`; weekday phrases such as `thứ 2 tuần sau`
@@ -553,31 +559,36 @@ progress or scores is intentionally excluded, not a missing persistence task.
   every listed subject even when explicit tasks exist, and accepts both the
   dedicated extra-time array and a per-subject flag.
 - **Application service:** `FocusService` owns classes, tasks, preferences and
-  the current plan; it merges imports by normalised subject and title (updating
-  a task instead of duplicating it), adds review tasks for timetable subjects
+  the current plan; it merges imports by canonical subject and title (updating
+  a task instead of duplicating it), settles Vietnamese/English subject names on
+  one English name, adds review tasks for timetable subjects
   that have no task, lengthens each task of an emphasised subject by 50% or 30
   minutes (whichever is larger), validates hand-made and edited sessions, and
   completes/removes sessions. Manual tasks and sessions default to the internal
   medium priority.
-- **Focus Planner panel:** `focus.fxml` + `FocusController` provide file import,
-  free-time selectors, Classes/Tasks/Session tabs, a date-grouped session list
-  with Quick/Deep badges, a live `StudyTimer` countdown, and
-  Start/Pause/Finish/Remove/Clear controls. Priority is not shown. Each session
-  has an **Edit** action that opens the Session tab, and saving re-validates
-  free time, classes and same-day session overlaps while preserving completion;
-  **Cancel edit** restores the add-session form.
-- **Chat focus option:** **Focus plan** accepts pinned files or a typed subject
-  description, infers Quick/Deep from the description, runs extraction on the
-  shared worker pool, replies with a Markdown plan summary and opens Focus
-  Planner. When the description has no free-time window, Puppy stores the request
-  and any requested plan end, asks “When are you free?”, parses the reply into
-  `FocusPreferences`, and then builds the plan. A duration or deadline in the
-  request sets the plan end; otherwise the planner uses one week. Timetable class
-  times are not treated as free time. Slash commands remain a keyboard fallback,
-  and the composer placeholder is “Ask me anything”.
-- **Navigation:** a Focus button in the main menu and a Focus planner item in
-  More; the Focus panel is cached, monitor-aware (980 × 840 preferred, clamped
-  to the screen), and a running Focus timer blocks the idle sleep timer.
+- **Study panel:** `focus.fxml` + `FocusController` provide file import,
+  free-time selectors, Classes/Tasks/Session tabs, a date-grouped session list,
+  a live `StudyTimer` countdown, and Start/Pause/Finish/Remove/Clear controls.
+  Task and session forms have no focus-type selectors and session rows show no
+  type badges; priority is not shown either. Each session has an **Edit** action
+  that opens the Session tab, and saving re-validates free time, classes and
+  same-day session overlaps while preserving completion; **Cancel edit**
+  restores the add-session form.
+- **Chat Study option:** **Study** accepts pinned files or a typed
+  subject description, runs extraction on the shared worker pool, and replies
+  with the complete Markdown plan (every session, not a truncated summary) plus
+  **Save plan** / **Cancel** buttons at the end of the response. When the
+  description has no free-time window, Puppy stores
+  the request and any requested plan end, asks
+  “When are you free?”, parses the reply into `FocusPreferences`, and then builds
+  the plan. A duration or deadline in the request sets the plan end; otherwise
+  the planner uses one week. Timetable class times are not treated as free time.
+  Slash commands remain a keyboard fallback, and the composer placeholder is
+  “Ask me anything”.
+- **Navigation:** a **Focus** button in the main menu opens the timer, and a
+  **Study** item in both the main menu and More opens the planner. Both
+  panels are cached and monitor-aware (980 × 840 preferred, clamped to the
+  screen), and a running Focus timer blocks the idle sleep timer.
 - **Layout fix:** FXML multi-class attributes use commas
   (`styleClass="panel-card, focus-panel"`); space-separated values were parsed as
   one CSS class, so panel styling had not been applied.
@@ -586,12 +597,14 @@ progress or scores is intentionally excluded, not a missing persistence task.
   block sizes, warnings, the one-week default, the latest-deadline horizon and
   explicit plan ends), `FocusFormatsTest` (time, date, type, priority, duration,
   free-time-window and plan-end parsing), `FocusJsonParserTest`
-  (strict/fenced/Vietnamese input, invalid rows, subject fallback, always-on
-  reviews and extra-time subjects) and `FocusServiceTest` (normalised merge,
-  override, review fallback for new timetable subjects, extra-time adjustment,
-  one-shot plan end, manual validation, session editing and completion).
+  (strict/fenced/Vietnamese input, mixed Vietnamese/English subject names,
+  aliases, invalid rows, subject fallback, always-on reviews and extra-time
+  subjects), `FocusServiceTest` (canonical merge, override, review fallback for
+  new timetable subjects, extra-time adjustment, one-shot plan end, manual
+  validation, session editing and completion) and
+  `ChatControllerPlanSummaryTest` (every preview session is listed).
   `OllamaClientTest` now checks JSON-mode requests, and `FxmlLayoutTest` opens
-  the Focus panel and checks the visible Copy/Reuse actions and right-click
+  the Study panel and checks the visible Copy/Reuse actions and right-click
   message menu.
 
 ## Services used by the UI
@@ -648,29 +661,30 @@ progress or scores is intentionally excluded, not a missing persistence task.
   request win; the priority rules (study must not be interrupted by an idle
   refresh) belong to milestone 6.
 - **Data directory:** `AppConfig` resolves `%LOCALAPPDATA%\PuppyAI` (or
-  `~/.local/share/PuppyAI`). SQLite stores chat, Focus, non-secret settings and
-  quiz definitions there;
+  `~/.local/share/PuppyAI`). SQLite stores chat, study-plan data, non-secret
+  settings and quiz definitions there;
   `AiSettingsStore` keeps the API key in a separate secret file. The directory is
   configurable; runtime data should not be placed inside the project.
-- **Focus pipeline:** the selected model only extracts facts from timetable/task
-  files; `FocusPlanner` makes every scheduling decision. This keeps the hard
-  constraints deterministic and testable when the model is unavailable. Import
-  reads up to five files (20 MB each) and caps combined document context at
-  24,000 characters; the planner defaults to a one-week horizon and accepts an
-  explicit duration or deadline, capped at 365 days.
-- **Focus fallback:** every subject named in a subject list gets one
-  "Review class notes" Quick task, even when other tasks exist; a timetable
+- **Study pipeline:** the selected model only extracts facts from
+  timetable/task files; `FocusPlanner` makes every scheduling decision. This
+  keeps the hard constraints deterministic and testable when the model is
+  unavailable. Import reads up to five files (20 MB each) and caps combined
+  document context at 24,000 characters; the planner defaults to a one-week
+  horizon and accepts an explicit duration or deadline, capped at 365 days.
+- **Study fallback:** every subject named in a subject list gets one
+  "Review class notes" task, even when other tasks exist; a timetable
   subject without any task gets the same fallback. Reviews are due at the end of
   the default week (today + 6 days). Imports merge classes into the existing set
   and match tasks by normalised subject + title, updating the existing task
   instead of duplicating it. Extra-time subjects are lengthened by 50% or 30
   minutes, whichever is larger, and the emphasis never replaces the other
   subjects' work.
-- **Focus sessions:** sessions and completion persist in SQLite. `Generate plan` rebuilds the
-  scheduled list from classes and tasks; hand-made sessions are not carried into
-  a regenerated plan. Manual and generated sessions can be edited in the Session
-  tab, with placement re-validated on save. A running Focus countdown keeps the
-  mascot in STUDYING and prevents the idle-sleep timer from firing.
+- **Study sessions:** sessions and completion persist in SQLite.
+  `Generate plan` rebuilds the scheduled list from classes and tasks; hand-made
+  sessions are not carried into a regenerated plan. Manual and generated sessions
+  can be edited in the Session tab, with placement re-validated on save. A
+  running Focus timer countdown keeps the mascot in STUDYING and prevents the
+  idle-sleep timer from firing.
 
 ## Known bugs / limitations
 
@@ -684,10 +698,10 @@ progress or scores is intentionally excluded, not a missing persistence task.
   are deferred. Large long-lived histories may require future paging work.
 - Supplemental instructions and Multiple Quiz mode are not implemented; see
   PROMPT-1 and QUIZ-1 through QUIZ-3 above.
-- Regenerating a Focus plan replaces the scheduled session list, so hand-made
+- Regenerating the plan replaces the scheduled session list, so hand-made
   sessions are lost unless they are recreated. Manual and generated sessions are
   not yet linked to source tasks.
-- Focus extraction requires the selected model: a working OpenRouter key and
+- Study extraction requires the selected model: a working OpenRouter key and
   internet connection for cloud, or Ollama and the configured model for local.
   Combined document text is capped at 24,000 characters, and scanned/image-only
   files are not supported.

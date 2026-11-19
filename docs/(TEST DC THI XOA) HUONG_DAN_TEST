@@ -44,7 +44,7 @@ Use a harmless document containing a distinctive fact.
 
 **Note:** Earlier assistant replies may contain document facts, so removing an attachment does not make those facts disappear from conversation history.
 
-## 4. Focus planner
+## 4. Study
 
 - [ ] Add a class, task and free-time window.
 - [ ] Generate a plan; add and edit a manual session.
@@ -61,7 +61,7 @@ Use a harmless document containing a distinctive fact.
 - [ ] During a long reply, switch conversations. Tokens never appear in the wrong chat.
 - [ ] Cancel an unfinished reply, then restart. Saved partial text is identified as interrupted, not completed.
 - [ ] With Ollama stopped or cloud access unavailable, sending a message produces a visible error without losing the user message.
-- [ ] Puppy remains responsive while saving or importing Focus data.
+- [ ] Puppy remains responsive while saving or importing study-plan data.
 
 **Optional—disposable database only:** Hold a write transaction open using a SQLite tool.
 

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns="http://javafx.com/javafx/24" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.puppy.controller.TodoController"
+      styleClass="panel-card,todo-panel" spacing="8" minWidth="0" minHeight="0">
+    <HBox styleClass="panel-header" alignment="CENTER_LEFT" spacing="4">
+        <Label text="To-do List" styleClass="panel-title"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
+        <Button text="_" onAction="#onMinimize" styleClass="window-button"/>
+        <Button text="X" onAction="#onClose" styleClass="window-button"/>
+    </HBox>
+    <SplitPane dividerPositions="0.38" VBox.vgrow="ALWAYS" styleClass="todo-split">
+        <VBox spacing="8" styleClass="todo-column">
+            <Label text="Create a task" styleClass="section-title"/>
+            <TextField fx:id="newTaskInput" promptText="e.g. Study Java" onAction="#onStartRefinement"/>
+            <HBox spacing="6">
+                <Button text="Add as-is" onAction="#onAddSimpleTask" styleClass="quiet-button"/>
+                <Button text="Refine with AI" onAction="#onStartRefinement" styleClass="primary-button"/>
+            </HBox>
+            <Separator/>
+            <Label text="Your tasks" styleClass="section-title"/>
+            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS"
+                        styleClass="todo-scroll">
+                <VBox fx:id="taskList" spacing="6"/>
+            </ScrollPane>
+        </VBox>
+        <VBox fx:id="refinementPane" spacing="7" styleClass="todo-column">
+            <Label text="AI task refinement" styleClass="section-title"/>
+            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" prefHeight="130"
+                        styleClass="todo-scroll">
+                <VBox fx:id="conversationBox" spacing="5"/>
+            </ScrollPane>
+            <HBox spacing="6">
+                <TextField fx:id="refinementInput" HBox.hgrow="ALWAYS"
+                           promptText="Answer or ask: make it simpler, add practical steps..."
+                           onAction="#onSendRefinement"/>
+                <Button fx:id="sendRefinementButton" text="Send" onAction="#onSendRefinement"
+                        styleClass="primary-button"/>
+            </HBox>
+            <Label fx:id="refinementStatus" text="" wrapText="true" styleClass="muted-copy"/>
+            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS"
+                        styleClass="todo-scroll">
+                <VBox fx:id="proposalForm" spacing="5">
+                    <Label text="Review before saving" styleClass="section-title"/>
+                    <Label text="Title" styleClass="muted-copy"/>
+                    <TextField fx:id="titleField"/>
+                    <Label text="Description" styleClass="muted-copy"/>
+                    <TextArea fx:id="descriptionField" prefRowCount="2" wrapText="true"/>
+                    <HBox spacing="6">
+                        <VBox spacing="3" HBox.hgrow="ALWAYS">
+                            <Label text="Category" styleClass="muted-copy"/>
+                            <TextField fx:id="categoryField"/>
+                        </VBox>
+                        <VBox spacing="3">
+                            <Label text="Priority" styleClass="muted-copy"/>
+                            <ComboBox fx:id="priorityChoice" prefWidth="120"/>
+                        </VBox>
+                    </HBox>
+                    <Label text="Completion criteria" styleClass="muted-copy"/>
+                    <TextArea fx:id="criteriaField" prefRowCount="2" wrapText="true"/>
+                    <Label text="Checklist (one item per line; reorder by moving lines)" styleClass="muted-copy"/>
+                    <TextArea fx:id="checklistField" prefRowCount="4" wrapText="true"/>
+                    <Label text="Tags (comma separated)" styleClass="muted-copy"/>
+                    <TextField fx:id="tagsField"/>
+                    <HBox spacing="6">
+                        <Button fx:id="saveProposalButton" text="Confirm and save"
+                                onAction="#onSaveProposal" styleClass="primary-button"/>
+                        <Button text="Cancel" onAction="#onCancelRefinement" styleClass="quiet-button"/>
+                    </HBox>
+                </VBox>
+            </ScrollPane>
+        </VBox>
+    </SplitPane>
+</VBox>

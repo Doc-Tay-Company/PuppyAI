@@ -37,7 +37,7 @@ public final class ChatService {
         return reply(conversation, attachments, null, onToken);
     }
 
-    /** Streams a reply using the recent conversation, attached documents and current focus plan. */
+    /** Streams a reply using the recent conversation, attached documents and current study plan. */
     public String reply(List<ChatMessage> conversation, List<DocumentAttachment> attachments,
                         FocusPlan focusPlan, Consumer<String> onToken) throws AiException {
         Objects.requireNonNull(onToken, "onToken");

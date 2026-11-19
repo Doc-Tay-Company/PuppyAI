@@ -72,9 +72,8 @@ final class ChatPromptBuilder {
                     .append(session.timeRange()).append(" | ")
                     .append(session.subject()).append(": ")
                     .append(session.title()).append(" (")
-                    .append(session.type().label()).append(", ")
                     .append(session.durationMinutes()).append("m")
-                    .append(session.completed() ? ", completed" : "")
+                    .append(", ").append(session.state().name().toLowerCase(java.util.Locale.ROOT))
                     .append(")\n");
         }
         if (sessions.size() > maxSessions) {

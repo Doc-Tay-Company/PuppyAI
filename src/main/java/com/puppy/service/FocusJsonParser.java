@@ -8,6 +8,7 @@ import com.puppy.model.ClassSlot;
 import com.puppy.model.FocusExtraction;
 import com.puppy.model.FocusPlannerInput;
 import com.puppy.model.StudyTask;
+import com.puppy.util.SubjectNames;
 
 import java.io.IOException;
 import java.time.DayOfWeek;
@@ -38,11 +39,13 @@ final class FocusJsonParser {
         }
 
         List<String> notes = new ArrayList<>();
-        List<ClassSlot> classes = parseClasses(root, notes);
-        List<StudyTask> tasks = new ArrayList<>(parseTasks(root, today, notes));
-        List<SubjectEntry> subjects = parseSubjects(root);
+        Map<String, String> aliases = subjectAliases(root);
+        List<ClassSlot> classes = dedupeClasses(parseClasses(root, notes, aliases));
+        List<StudyTask> tasks = new ArrayList<>(
+                dedupeTasks(parseTasks(root, today, notes, aliases)));
+        List<SubjectEntry> subjects = parseSubjects(root, aliases);
         List<String> moreTimeSubjects = mergeMoreTimeSubjects(
-                subjects, parseMoreTimeSubjects(root));
+                subjects, parseMoreTimeSubjects(root, aliases), aliases);
         addMissingSubjectEntries(subjects, moreTimeSubjects);
         tasks.addAll(reviewTasksFromSubjects(subjects, tasks, today, notes));
 
@@ -98,7 +101,8 @@ final class FocusJsonParser {
         }
     }
 
-    private List<ClassSlot> parseClasses(JsonNode root, List<String> notes) {
+    private List<ClassSlot> parseClasses(JsonNode root, List<String> notes,
+                                         Map<String, String> aliases) {
         JsonNode nodes = firstArray(root, "classes", "classSlots", "timetable", "schedule");
         if (nodes == null) {
             return List.of();
@@ -107,7 +111,8 @@ final class FocusJsonParser {
         int index = 0;
         for (JsonNode node : nodes) {
             index++;
-            String subject = text(node, "subject", "course", "module", "className", "name");
+            String subject = resolveSubject(
+                    text(node, "subject", "course", "module", "className", "name"), aliases);
             String dayText = text(node, "day", "weekday", "dayOfWeek");
             String startText = text(node, "start", "startTime", "from", "begin");
             String endText = text(node, "end", "endTime", "to", "finish");
@@ -127,7 +132,8 @@ final class FocusJsonParser {
         return classes;
     }
 
-    private List<StudyTask> parseTasks(JsonNode root, LocalDate today, List<String> notes) {
+    private List<StudyTask> parseTasks(JsonNode root, LocalDate today, List<String> notes,
+                                       Map<String, String> aliases) {
         JsonNode nodes = firstArray(root, "tasks", "assignments", "homework", "deadlines",
                 "studyTasks", "work");
         if (nodes == null) {
@@ -137,7 +143,8 @@ final class FocusJsonParser {
         int index = 0;
         for (JsonNode node : nodes) {
             index++;
-            String subject = text(node, "subject", "course", "module", "className");
+            String subject = resolveSubject(
+                    text(node, "subject", "course", "module", "className"), aliases);
             String title = text(node, "title", "task", "name", "description", "topic", "activity");
             if (title.isBlank()) {
                 title = "Study " + (subject.isBlank() ? "session" : subject);
@@ -167,16 +174,16 @@ final class FocusJsonParser {
         return tasks;
     }
 
-    private List<SubjectEntry> parseSubjects(JsonNode root) {
+    private List<SubjectEntry> parseSubjects(JsonNode root, Map<String, String> aliases) {
         JsonNode nodes = firstArray(root, "subjects", "courses", "modules");
         if (nodes == null || nodes.isEmpty()) {
             return new ArrayList<>();
         }
         List<SubjectEntry> subjects = new ArrayList<>();
         for (JsonNode node : nodes) {
-            String subject = node.isTextual()
+            String subject = resolveSubject(node.isTextual()
                     ? node.asText().strip()
-                    : text(node, "subject", "course", "name", "module");
+                    : text(node, "subject", "course", "name", "module"), aliases);
             if (subject.isBlank()) {
                 continue;
             }
@@ -200,7 +207,7 @@ final class FocusJsonParser {
      * The extraction names subjects that need extra time separately from tasks.
      * Accept both the dedicated array and a per-subject flag.
      */
-    private List<String> parseMoreTimeSubjects(JsonNode root) {
+    private List<String> parseMoreTimeSubjects(JsonNode root, Map<String, String> aliases) {
         Map<String, String> subjects = new LinkedHashMap<>();
         JsonNode nodes = firstArray(root, "moreTimeSubjects", "needsMoreTime",
                 "extraTimeSubjects", "emphasizedSubjects");
@@ -209,14 +216,14 @@ final class FocusJsonParser {
                 String subject = node.isTextual()
                         ? node.asText().strip()
                         : text(node, "subject", "course", "name", "module");
-                addUniqueSubject(subjects, subject);
+                addUniqueSubject(subjects, subject, aliases);
             }
         } else if (root != null) {
             for (String field : List.of("moreTimeSubjects", "needsMoreTime",
                     "extraTimeSubjects", "emphasizedSubjects")) {
                 JsonNode node = root.get(field);
                 if (node != null && node.isTextual()) {
-                    addUniqueSubject(subjects, node.asText().strip());
+                    addUniqueSubject(subjects, node.asText().strip(), aliases);
                 }
             }
         }
@@ -224,14 +231,15 @@ final class FocusJsonParser {
     }
 
     private List<String> mergeMoreTimeSubjects(List<SubjectEntry> subjects,
-                                               List<String> explicit) {
+                                               List<String> explicit,
+                                               Map<String, String> aliases) {
         Map<String, String> merged = new LinkedHashMap<>();
         for (String subject : explicit) {
-            addUniqueSubject(merged, subject);
+            addUniqueSubject(merged, subject, aliases);
         }
         for (SubjectEntry entry : subjects) {
             if (entry.wantsMoreTime()) {
-                addUniqueSubject(merged, entry.subject());
+                addUniqueSubject(merged, entry.subject(), aliases);
             }
         }
         return List.copyOf(merged.values());
@@ -241,10 +249,10 @@ final class FocusJsonParser {
                                           List<String> moreTimeSubjects) {
         Set<String> seen = new HashSet<>();
         for (SubjectEntry subject : subjects) {
-            seen.add(FocusFormats.comparisonKey(subject.subject()));
+            seen.add(SubjectNames.key(subject.subject()));
         }
         for (String subject : moreTimeSubjects) {
-            if (seen.add(FocusFormats.comparisonKey(subject))) {
+            if (seen.add(SubjectNames.key(subject))) {
                 subjects.add(new SubjectEntry(
                         subject, FocusType.QUICK, Priority.MEDIUM, true));
             }
@@ -272,7 +280,8 @@ final class FocusJsonParser {
             if (!keys.add(key)) {
                 continue;
             }
-            int minutes = subject.type() == FocusType.DEEP ? 60 : 50;
+            int minutes = subject.type() == FocusType.DEEP ? 60
+                    : subject.type() == FocusType.EXAM ? 45 : 50;
             tasks.add(new StudyTask(subject.subject(), "Review class notes", subject.type(),
                     minutes, today.plusDays(FocusPlanner.DEFAULT_HORIZON_DAYS - 1L),
                     subject.priority()));
@@ -285,12 +294,93 @@ final class FocusJsonParser {
         return tasks;
     }
 
-    private static void addUniqueSubject(Map<String, String> subjects, String value) {
-        if (value == null || value.isBlank()) {
+    private static void addUniqueSubject(Map<String, String> subjects, String value,
+                                         Map<String, String> aliases) {
+        String resolved = resolveSubject(value, aliases);
+        if (resolved.isBlank()) {
             return;
         }
-        String cleaned = value.strip();
-        subjects.putIfAbsent(FocusFormats.comparisonKey(cleaned), cleaned);
+        subjects.putIfAbsent(SubjectNames.key(resolved), resolved);
+    }
+
+    /**
+     * Reads optional aliases the model attached to a subject, so a file that
+     * lists both translations still produces one subject. The alias array is
+     * accepted as either strings or objects with a subject/name field.
+     */
+    private Map<String, String> subjectAliases(JsonNode root) {
+        JsonNode nodes = firstArray(root, "subjects", "courses", "modules");
+        if (nodes == null || nodes.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> aliases = new LinkedHashMap<>();
+        for (JsonNode node : nodes) {
+            if (!node.isObject()) {
+                continue;
+            }
+            String canonical = text(node, "subject", "course", "name", "module");
+            if (canonical.isBlank()) {
+                continue;
+            }
+            String resolved = resolveSubject(canonical, aliases);
+            aliases.put(SubjectNames.key(resolved), resolved);
+            JsonNode aliasNodes = node.get("aliases");
+            if (aliasNodes == null) {
+                aliasNodes = node.get("alias");
+            }
+            if (aliasNodes == null) {
+                continue;
+            }
+            if (aliasNodes.isTextual()) {
+                aliases.putIfAbsent(SubjectNames.key(aliasNodes.asText()), resolved);
+            } else if (aliasNodes.isArray()) {
+                for (JsonNode alias : aliasNodes) {
+                    String name = alias.isTextual()
+                            ? alias.asText()
+                            : text(alias, "subject", "course", "name", "module");
+                    if (!name.isBlank()) {
+                        aliases.putIfAbsent(SubjectNames.key(name), resolved);
+                    }
+                }
+            }
+        }
+        return aliases;
+    }
+
+    private static String resolveSubject(String value, Map<String, String> aliases) {
+        String cleaned = value == null ? "" : value.replace('\u00a0', ' ')
+                .replaceAll("\\s+", " ").strip();
+        if (cleaned.isEmpty()) {
+            return "";
+        }
+        String canonical = aliases.get(SubjectNames.key(cleaned));
+        if (canonical != null) {
+            return canonical;
+        }
+        canonical = SubjectNames.canonical(cleaned);
+        String aliased = aliases.get(SubjectNames.key(canonical));
+        return aliased == null ? canonical : aliased;
+    }
+
+    private static List<ClassSlot> dedupeClasses(List<ClassSlot> classes) {
+        Map<String, ClassSlot> unique = new LinkedHashMap<>();
+        for (ClassSlot classSlot : classes) {
+            unique.put(classKey(classSlot), classSlot);
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private static String classKey(ClassSlot classSlot) {
+        return SubjectNames.key(classSlot.subject()) + '\u0000'
+                + classSlot.day() + '\u0000' + classSlot.start() + '\u0000' + classSlot.end();
+    }
+
+    private static List<StudyTask> dedupeTasks(List<StudyTask> tasks) {
+        Map<String, StudyTask> unique = new LinkedHashMap<>();
+        for (StudyTask task : tasks) {
+            unique.put(FocusFormats.taskKey(task.subject(), task.title()), task);
+        }
+        return List.copyOf(unique.values());
     }
 
     private static boolean isTrue(JsonNode node, String... names) {
@@ -340,7 +430,7 @@ final class FocusJsonParser {
                 return (int) Math.min(600, Math.round(value.asDouble() * 60));
             }
         }
-        return type == FocusType.DEEP ? 60 : 30;
+        return type == FocusType.DEEP ? 60 : type == FocusType.EXAM ? 45 : 30;
     }
 
     private static FocusType inferType(String title) {

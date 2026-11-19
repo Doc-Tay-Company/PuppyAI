@@ -107,6 +107,63 @@ class FocusJsonParserTest {
     }
 
     @Test
+    void settlesOnOneSubjectNameWhenVietnameseAndEnglishBothAppear() throws Exception {
+        String reply = """
+                {
+                  "classes": [
+                    {"subject": "Toán", "day": "MONDAY", "start": "08:00", "end": "09:30"},
+                    {"subject": "Math", "day": "MONDAY", "start": "08:00", "end": "09:30"}
+                  ],
+                  "tasks": [
+                    {"subject": "Toán", "title": "Review chapter 3", "estimatedMinutes": 40},
+                    {"subject": "Math", "title": "Review chapter 3", "estimatedMinutes": 60}
+                  ],
+                  "subjects": ["Toán", "Math", "Vật lý"],
+                  "moreTimeSubjects": ["Toán"]
+                }
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertEquals(1, extraction.input().classes().size(),
+                "The same class in two languages must not be duplicated");
+        assertEquals("Math", extraction.input().classes().get(0).subject());
+        assertEquals(3, extraction.input().tasks().size(),
+                "The deduplicated explicit task and one review task per subject are enough");
+        assertEquals("Math", extraction.input().tasks().get(0).subject());
+        assertEquals("Review chapter 3", extraction.input().tasks().get(0).title(),
+                "The explicit task should keep its title");
+        assertEquals(List.of("Math"), extraction.input().moreTimeSubjects());
+        assertTrue(extraction.input().subjects().contains("Math"));
+        assertTrue(extraction.input().subjects().contains("Physics"));
+        assertEquals(2, extraction.input().subjects().stream().distinct().count());
+    }
+
+    @Test
+    void mergesSubjectAliasesReturnedByTheModel() throws Exception {
+        String reply = """
+                {
+                  "subjects": [
+                    {"subject": "Advanced Mathematics", "aliases": ["Toán cao cấp"]},
+                    "Physics"
+                  ],
+                  "tasks": [
+                    {"subject": "Toán cao cấp", "title": "Problem set", "estimatedMinutes": 40}
+                  ]
+                }
+                """;
+
+        FocusExtraction extraction = parser.parse(reply, TODAY);
+
+        assertTrue(extraction.input().tasks().stream()
+                        .anyMatch(task -> task.subject().equals("Advanced Mathematics")),
+                "The alias should resolve to the canonical subject: "
+                        + extraction.input().tasks());
+        assertTrue(extraction.input().subjects().contains("Advanced Mathematics"));
+        assertFalse(extraction.input().subjects().contains("Toán cao cấp"));
+    }
+
+    @Test
     void skipsInvalidRowsWithANoteInsteadOfRejectingTheFile() throws Exception {
         String reply = """
                 {

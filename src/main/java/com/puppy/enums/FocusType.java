@@ -1,17 +1,19 @@
 package com.puppy.enums;
 
 /**
- * The two kinds of planned focus work.
+ * Legacy kinds of planned focus work.
  *
- * <p>Quick focus is for reviewing lectures and reading material; deep focus is
- * for important or difficult work, low confidence, programming, assignments and
- * research. The default block length is used when a task does not fit in one
- * sitting and has to be split.</p>
+ * <p>Focus-type classification is temporarily hidden from the Study UI:
+ * there are no type selectors or badges, and new work uses {@link #QUICK} as a
+ * neutral stored value. The enum and the persisted field remain so plans saved
+ * by older versions still load without losing data.</p>
  */
 public enum FocusType {
     QUICK("Quick focus", 25, "Review lectures and read material"),
     DEEP("Deep focus", 50,
-            "Important or difficult work, low confidence, programming, assignments and research");
+            "Important or difficult work, low confidence, programming, assignments and research"),
+    EXAM("Exam preparation", 45,
+            "Timed practice, retrieval, mock questions and targeted exam review");
 
     private final String label;
     private final int defaultBlockMinutes;

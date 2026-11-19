@@ -90,10 +90,22 @@ final class FocusPlanEditParser {
                     FocusEditAction.Type.REMOVE;
             case "CHANGE_SUBJECT", "SWITCH_SUBJECT", "RENAME_SUBJECT" ->
                     FocusEditAction.Type.CHANGE_SUBJECT;
+            case "CHANGE_TYPE", "SET_MODE", "CHANGE_MODE", "SET_FOCUS_TYPE" ->
+                    FocusEditAction.Type.CHANGE_TYPE;
             case "ADD", "INSERT", "CREATE" ->
                     FocusEditAction.Type.ADD;
+            case "ADD_TASK", "CREATE_TASK", "ADD_SUBJECT" ->
+                    FocusEditAction.Type.ADD_TASK;
+            case "REMOVE_TASK", "DELETE_TASK", "REMOVE_SUBJECT", "DROP_SUBJECT" ->
+                    FocusEditAction.Type.REMOVE_TASK;
+            case "PRIORITIZE_SUBJECT", "PRIORITIZE", "SET_PRIORITY" ->
+                    FocusEditAction.Type.PRIORITIZE_SUBJECT;
             case "SET_WINDOW", "CHANGE_WINDOW", "SET_FREE_TIME", "CHANGE_FREE_TIME" ->
                     FocusEditAction.Type.SET_WINDOW;
+            case "SET_BREAK", "CHANGE_BREAK", "ADJUST_BREAK" ->
+                    FocusEditAction.Type.SET_BREAK;
+            case "SET_SESSION_LIMIT", "CHANGE_SESSION_LIMIT", "MAX_SESSION" ->
+                    FocusEditAction.Type.SET_SESSION_LIMIT;
             case "UPDATE", "EDIT", "CHANGE", "MODIFY" ->
                     FocusEditAction.Type.UPDATE;
             default -> null;
@@ -134,8 +146,12 @@ final class FocusPlanEditParser {
             case MOVE -> date == null && start == null ? "a new date or start time" : null;
             case RESIZE -> durationMinutes == null ? "a duration" : null;
             case CHANGE_SUBJECT -> subject.isBlank() ? "a subject" : null;
+            case CHANGE_TYPE -> focusType == null ? "a focus type" : null;
             case ADD -> subject.isBlank() || title.isBlank()
                     ? "a subject and title" : null;
+            case ADD_TASK -> subject.isBlank() ? "a subject" : null;
+            case REMOVE_TASK, PRIORITIZE_SUBJECT -> subject.isBlank() ? "a subject" : null;
+            case SET_BREAK, SET_SESSION_LIMIT -> durationMinutes == null ? "minutes" : null;
             default -> null;
         };
         if (missing != null) {

@@ -1,5 +1,7 @@
 package com.puppy.model;
 
+import com.puppy.util.SubjectNames;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -30,7 +32,16 @@ public record FocusPlan(
         return sessions.stream().filter(FocusSession::completed).count();
     }
 
+    public long skippedCount() {
+        return sessions.stream()
+                .filter(session -> session.state() == com.puppy.enums.FocusSessionState.SKIPPED)
+                .count();
+    }
+
     public long subjectCount() {
-        return sessions.stream().map(FocusSession::subject).distinct().count();
+        return sessions.stream()
+                .map(session -> SubjectNames.key(session.subject()))
+                .distinct()
+                .count();
     }
 }

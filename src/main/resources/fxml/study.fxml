@@ -11,7 +11,7 @@
       fx:controller="com.puppy.controller.StudyController"
       styleClass="panel-card, study-panel" spacing="8" minWidth="0" minHeight="0">
     <HBox styleClass="study-header" alignment="CENTER_LEFT" spacing="4">
-        <Label text="Study Mode" styleClass="panel-title"/>
+        <Label text="Focus" styleClass="panel-title"/>
         <Region HBox.hgrow="ALWAYS"/>
         <Button text="Menu" onAction="#onMainMenu" styleClass="quiet-button"/>
         <Button text="_" onAction="#onMinimize" styleClass="window-button"/>

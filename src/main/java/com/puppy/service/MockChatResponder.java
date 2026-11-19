@@ -28,7 +28,7 @@ public final class MockChatResponder {
     public String replyTo(String message) {
         String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
         if (containsAny(normalized, STUDY_CUES)) {
-            return "Study mode is that way! Open the menu and pick STUDY — I'll read along with you.";
+            return "Focus mode is that way! Open the menu and pick FOCUS — I'll stay right there with you.";
         }
         if (containsAny(normalized, HELP_CUES)) {
             return "I can chat, help you focus and, once I grow up, research things online. "

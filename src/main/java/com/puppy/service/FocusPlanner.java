@@ -8,6 +8,7 @@ import com.puppy.model.FocusPlannerInput;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.model.StudyTask;
+import com.puppy.util.SubjectNames;
 
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -31,7 +32,7 @@ import java.util.UUID;
  * Deterministic study planner.
  *
  * <p>The planner is pure Java and knows nothing about JavaFX or Ollama. It
- * places task blocks inside the user's daily free window while obeying five
+ * places task blocks inside the user's daily free window while obeying these
  * rules:</p>
  *
  * <ol>
@@ -48,9 +49,10 @@ import java.util.UUID;
  *       day's free window.</li>
  * </ol>
  *
- * <p>Deep-focus tasks are split into roughly 50-minute blocks and quick-focus
- * tasks into roughly 25-minute blocks. Blocks are split evenly so a
- * 60-minute task becomes two 30-minute sessions rather than a 50 + 10 pair.</p>
+ * <p>Tasks are split into session-sized blocks using the block length stored on
+ * the task; new tasks use the neutral 25-minute block. Blocks are split evenly
+ * so a 60-minute task becomes two 30-minute sessions rather than a 25 + 35
+ * pair. The stored type is kept only so older plans still load.</p>
  */
 public final class FocusPlanner {
 
@@ -80,16 +82,16 @@ public final class FocusPlanner {
         Set<String> prioritizedSubjects = new LinkedHashSet<>();
         if (input.moreTimeSubjects() != null) {
             for (String s : input.moreTimeSubjects()) {
-                prioritizedSubjects.add(FocusFormats.comparisonKey(s));
+                prioritizedSubjects.add(FocusFormats.subjectKey(s));
             }
         }
         for (StudyTask task : tasks) {
             if (task.priority() == Priority.HIGH) {
-                prioritizedSubjects.add(FocusFormats.comparisonKey(task.subject()));
+                prioritizedSubjects.add(FocusFormats.subjectKey(task.subject()));
             }
         }
 
-        Map<String, List<Chunk>> queues = subjectQueues(tasks);
+        Map<String, List<Chunk>> queues = subjectQueues(tasks, preferences.maxSessionMinutes());
         List<String> subjectOrder = new ArrayList<>(queues.keySet());
         if (!prioritizedSubjects.isEmpty()) {
             List<String> prioritizedOrder = new ArrayList<>();
@@ -149,7 +151,7 @@ public final class FocusPlanner {
                     continue;
                 }
                 placeOne(queue, free, date, sessions, perSubject, subjectMinutes,
-                        Integer.MAX_VALUE);
+                        Integer.MAX_VALUE, preferences.breakMinutes());
             }
 
             // Pass 2: a second session only for subjects that already had one.
@@ -164,7 +166,7 @@ public final class FocusPlanner {
                 }
                 int cap = prioritizedSubjects.contains(subject) ? Integer.MAX_VALUE : secondSessionCap;
                 placeOne(queue, free, date, sessions, perSubject, subjectMinutes,
-                        cap);
+                        cap, preferences.breakMinutes());
             }
 
             // Pass 3: greedy fill for prioritized subjects to utilize remaining free time.
@@ -183,7 +185,7 @@ public final class FocusPlanner {
                             continue;
                         }
                         if (placeOne(queue, free, date, sessions, perSubject, subjectMinutes,
-                                Integer.MAX_VALUE)) {
+                                Integer.MAX_VALUE, preferences.breakMinutes())) {
                             placedAny = true;
                         }
                     }
@@ -194,7 +196,8 @@ public final class FocusPlanner {
         for (List<Chunk> queue : queues.values()) {
             missed.addAll(queue);
             for (Chunk chunk : queue) {
-                missedMinutes.merge(chunk.task().subject(), chunk.minutes(), Integer::sum);
+                missedMinutes.merge(SubjectNames.key(chunk.task().subject()),
+                        chunk.minutes(), Integer::sum);
             }
         }
 
@@ -259,6 +262,11 @@ public final class FocusPlanner {
      * name. Urgent tasks come first inside each queue.
      */
     static Map<String, List<Chunk>> subjectQueues(List<StudyTask> tasks) {
+        return subjectQueues(tasks, Integer.MAX_VALUE);
+    }
+
+    private static Map<String, List<Chunk>> subjectQueues(List<StudyTask> tasks,
+                                                           int maxSessionMinutes) {
         Comparator<StudyTask> urgency = Comparator
                 .comparing((StudyTask task) -> task.deadline() == null
                         ? LocalDate.MAX : task.deadline())
@@ -269,9 +277,9 @@ public final class FocusPlanner {
 
         Map<String, List<Chunk>> bySubject = new LinkedHashMap<>();
         tasks.stream().sorted(urgency).forEach(task -> bySubject
-                .computeIfAbsent(FocusFormats.comparisonKey(task.subject()),
+                .computeIfAbsent(FocusFormats.subjectKey(task.subject()),
                         key -> new ArrayList<>())
-                .addAll(split(task)));
+                .addAll(split(task, maxSessionMinutes)));
         return bySubject;
     }
 
@@ -292,7 +300,8 @@ public final class FocusPlanner {
                 if (chunk.task().deadline() != null && date.isAfter(chunk.task().deadline())) {
                     iterator.remove();
                     missed.add(chunk);
-                    missedMinutes.merge(chunk.task().subject(), chunk.minutes(), Integer::sum);
+                    missedMinutes.merge(SubjectNames.key(chunk.task().subject()),
+                        chunk.minutes(), Integer::sum);
                 }
             }
         }
@@ -307,10 +316,10 @@ public final class FocusPlanner {
                                     List<FocusSession> sessions,
                                     Map<String, Integer> perSubject,
                                     Map<String, Integer> subjectMinutes,
-                                    int subjectCap) {
+                                    int subjectCap, int breakMinutes) {
         for (int index = 0; index < queue.size(); index++) {
             Chunk chunk = queue.get(index);
-            String subject = FocusFormats.comparisonKey(chunk.task().subject());
+            String subject = FocusFormats.subjectKey(chunk.task().subject());
             if (subjectMinutes.getOrDefault(subject, 0) + chunk.minutes() > subjectCap) {
                 continue;
             }
@@ -319,7 +328,7 @@ public final class FocusPlanner {
                 continue;
             }
             sessions.add(toSession(chunk, date, slot.start()));
-            consume(free, slot, chunk.minutes());
+            consume(free, slot, chunk.minutes(), breakMinutes);
             perSubject.merge(subject, 1, Integer::sum);
             subjectMinutes.merge(subject, chunk.minutes(), Integer::sum);
             queue.remove(index);
@@ -335,8 +344,12 @@ public final class FocusPlanner {
     }
 
     static List<Chunk> split(StudyTask task) {
+        return split(task, Integer.MAX_VALUE);
+    }
+
+    private static List<Chunk> split(StudyTask task, int maxSessionMinutes) {
         int total = task.estimatedMinutes();
-        int maximum = task.type().defaultBlockMinutes();
+        int maximum = Math.min(task.type().defaultBlockMinutes(), maxSessionMinutes);
         if (total <= maximum) {
             return List.of(new Chunk(task, total));
         }
@@ -427,8 +440,9 @@ public final class FocusPlanner {
     }
 
     /** Removes the used prefix and the break that follows it. */
-    private static void consume(List<Interval> intervals, Interval used, int minutes) {
-        LocalTime newStart = used.start().plusMinutes(minutes + SESSION_GAP_MINUTES);
+    private static void consume(List<Interval> intervals, Interval used, int minutes,
+                                int breakMinutes) {
+        LocalTime newStart = used.start().plusMinutes(minutes + breakMinutes);
         int index = intervals.indexOf(used);
         if (index < 0) {
             return;
@@ -455,13 +469,19 @@ public final class FocusPlanner {
                     + "Try widening the free time or removing a class.");
         }
         for (Map.Entry<String, Integer> entry : missedMinutes.entrySet()) {
+            String displayName = missed.stream()
+                    .map(chunk -> chunk.task().subject())
+                    .filter(subject -> SubjectNames.key(subject).equals(entry.getKey()))
+                    .findFirst()
+                    .orElse(entry.getKey());
             List<LocalDate> deadlines = missed.stream()
-                    .filter(chunk -> chunk.task().subject().equals(entry.getKey()))
+                    .filter(chunk -> SubjectNames.key(chunk.task().subject())
+                            .equals(entry.getKey()))
                     .map(chunk -> chunk.task().deadline())
                     .filter(Objects::nonNull)
                     .toList();
             StringBuilder warning = new StringBuilder()
-                    .append(entry.getKey()).append(": ")
+                    .append(displayName).append(": ")
                     .append(entry.getValue()).append(" more minutes could not be placed.");
             if (!deadlines.isEmpty()) {
                 LocalDate earliest = deadlines.stream().min(LocalDate::compareTo).orElse(today);

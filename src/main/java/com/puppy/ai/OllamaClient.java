@@ -166,7 +166,7 @@ public final class OllamaClient implements ChatProvider {
 
     /**
      * Sends a request that asks Ollama to return a single JSON object. Used by
-     * the Focus planner to read timetable and task files reliably.
+     * Study to read timetable and task files reliably.
      */
     @Override
     public String jsonChat(List<ChatMessage> messages) throws AiException {

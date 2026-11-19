@@ -21,7 +21,7 @@ public enum MascotState {
     /** Delivering a response. */
     TALKING,
 
-    /** Study mode is active. */
+    /** The Focus timer is active. */
     STUDYING,
 
     /** Idle for an extended period. */

@@ -71,6 +71,7 @@ class FxmlLayoutTest {
                         "/fxml/chat.fxml",
                         "/fxml/study.fxml",
                         "/fxml/focus.fxml",
+                        "/fxml/todo.fxml",
                         "/fxml/settings.fxml")) {
                     new FXMLLoader(getClass().getResource(resource)).load();
                 }
@@ -141,6 +142,16 @@ class FxmlLayoutTest {
                 assertTrue(menu.getBackground() != null && menu.getBackground().getFills().stream()
                                 .anyMatch(fill -> !Color.TRANSPARENT.equals(fill.getFill())),
                         "The menu itself should keep its visible surface");
+                menuStage.getScene().getRoot().layout();
+                Node firstMenuButton = menu.getChildren().get(0);
+                Node lastMenuButton = menu.getChildren().get(menu.getChildren().size() - 1);
+                Bounds firstMenuBounds = firstMenuButton.localToScene(
+                        firstMenuButton.getBoundsInLocal());
+                Bounds lastMenuBounds = lastMenuButton.localToScene(
+                        lastMenuButton.getBoundsInLocal());
+                assertTrue(firstMenuBounds.getMinX() >= 0
+                                && lastMenuBounds.getMaxX() <= menuStage.getScene().getWidth() + 1,
+                        "The menu bar should be wide enough to show every label without clipping");
                 Event.fireEvent(shell, new KeyEvent(KeyEvent.KEY_PRESSED, "", "",
                         KeyCode.ESCAPE, false, false, false, false));
                 assertFalse(menuStage.isShowing(),
@@ -182,9 +193,9 @@ class FxmlLayoutTest {
                 assertTrue(stage.isAlwaysOnTop(), "The mascot should remain above panel windows");
                 assertFalse(studyStage.isAlwaysOnTop(), "Study should not be always-on-top of the mascot");
                 assertNull(studyStage.getOwner(), "Study should be positioned independently of the mascot stage");
-                assertEquals("Study Mode",
+                assertEquals("Focus",
                         ((Label) studyStage.getScene().lookup(".study-header .panel-title")).getText(),
-                        "The Study panel title should identify Study Mode");
+                        "The timer panel title should identify Focus");
                 assertNull(studyStage.getScene().lookup(".study-footer"),
                         "The separate Study footer should be removed");
                 Button studyToggle = (Button) studyStage.getScene().lookup("#startPauseButton");                Node panelNode = studyStage.getScene().getRoot();
@@ -207,17 +218,21 @@ class FxmlLayoutTest {
                 menu = (HBox) menuStage.getScene().lookup(".main-menu");
                 ((Button) menu.getChildren().get(1)).fire();
                 Stage focusStage = findShowingStage(".focus-panel");
-                assertEquals("Focus Planner",
+                assertEquals("Study",
                         ((Label) focusStage.getScene().lookup(".panel-title")).getText(),
-                        "The Focus menu item should open the planner in its own window");
+                        "The Study menu item should open the planner in its own window");
                 assertTrue(focusStage.getScene().lookup("#sessionsBox").isVisible(),
-                        "The Focus Planner should show its sessions list");
+                        "Study should show its sessions list");
                 assertNotNull(focusStage.getScene().lookup("#applyToAllSubjects"),
                         "The session editor should offer apply-to-all for a subject");
                 assertNotNull(focusStage.getScene().lookup("#undoButton"),
-                        "The Focus Planner should offer Undo");
+                        "Study should offer Undo");
                 assertNotNull(focusStage.getScene().lookup("#changeTimeButton"),
-                        "The Focus Planner should offer a Change time action");
+                        "Study should offer a Change time action");
+                assertNull(focusStage.getScene().lookup("#taskType"),
+                        "Study should not show a focus-type selector for tasks");
+                assertNull(focusStage.getScene().lookup("#sessionType"),
+                        "Study should not show a focus-type selector for sessions");
                 assertNull(focusStage.getOwner(),
                         "The Focus panel should be positioned independently of the mascot stage");
                 closeActivePanel(focusStage, 1);
@@ -254,7 +269,7 @@ class FxmlLayoutTest {
                         (ComboBox<ChatController.ComposerMode>) chatStage.getScene().lookup("#modeChoice");
                 assertEquals("Ask me anything", messageInput.getPromptText());
                 assertEquals("📌", ((Button) chatStage.getScene().lookup("#attachButton")).getText());
-                assertEquals(List.of("Chat", "Focus plan", "Adjust plan", "Help"),
+                assertEquals(List.of("Chat", "Study", "Adjust plan", "Help"),
                         modeChoice.getItems().stream().map(Object::toString).toList());
                 int messageCount = messages.getChildren().size();
                 messageInput.setText("   ");

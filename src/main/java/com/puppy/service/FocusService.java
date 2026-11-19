@@ -3,6 +3,7 @@ package com.puppy.service;
 import com.puppy.document.DocumentExtractionException;
 import com.puppy.document.DocumentTextExtractor;
 import com.puppy.enums.FocusType;
+import com.puppy.enums.FocusSessionState;
 import com.puppy.enums.Priority;
 import com.puppy.model.ClassSlot;
 import com.puppy.model.DocumentAttachment;
@@ -10,12 +11,14 @@ import com.puppy.model.FocusEditAction;
 import com.puppy.model.FocusEditResult;
 import com.puppy.model.FocusExtraction;
 import com.puppy.model.FocusPlan;
+import com.puppy.model.FocusPlanDraft;
 import com.puppy.model.FocusPlannerInput;
 import com.puppy.model.FocusPreferences;
 import com.puppy.model.FocusSession;
 import com.puppy.model.FocusState;
 import com.puppy.model.StudyTask;
 import com.puppy.repository.FocusRepository;
+import com.puppy.util.SubjectNames;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -36,7 +39,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Application service for the Focus planner. It owns the in-memory classes,
+ * Application service for Study. It owns the in-memory classes,
  * tasks, preferences and current plan, and is the only place the UI asks for
  * scheduling changes.
  *
@@ -74,6 +77,7 @@ public final class FocusService {
      * intentionally transient: it covers the current session, not a restart.
      */
     private record UndoSnapshot(FocusPlan plan, FocusPreferences preferences,
+                                List<StudyTask> tasks,
                                 boolean preferencesConfigured, boolean planEdited) {
     }
 
@@ -148,13 +152,15 @@ public final class FocusService {
 
         synchronized (this) {
             FocusPlan imported = mutate(() -> {
-                mergeClasses(extraction.input().classes());
-                mergeTasks(extraction.input().tasks());
-                if (moreTimeSubjects != null && !moreTimeSubjects.isEmpty()) {
-                    prioritizedSubjects.addAll(moreTimeSubjects);
+                Map<String, String> displayNames = subjectDisplayNames();
+                mergeClasses(extraction.input().classes(), displayNames);
+                mergeTasks(extraction.input().tasks(), displayNames);
+                List<String> resolvedMoreTime = resolveSubjects(moreTimeSubjects, displayNames);
+                if (!resolvedMoreTime.isEmpty()) {
+                    prioritizedSubjects.addAll(resolvedMoreTime);
                 }
-                addMissingReviewTasks(moreTimeSubjects, notes);
-                applyExtraTime(moreTimeSubjects, notes);
+                addMissingReviewTasks(resolvedMoreTime, notes, displayNames);
+                applyExtraTime(resolvedMoreTime, notes);
                 if (override != null) {
                     for (StudyTask task : tasks) {
                         taskIds.putIfAbsent(task.withType(override),
@@ -172,13 +178,77 @@ public final class FocusService {
     }
 
     /**
-     * Imports planner documents and lets the model decide each task's focus
-     * type. Deep-focus signals such as importance, difficulty or low confidence
-     * are handled in the extraction prompt.
+     * Imports planner documents using the extraction defaults. Focus-type
+     * classification is hidden from the UI for now; any type stored in an older
+     * plan is preserved and still loads.
      */
     public FocusPlan importDocuments(List<DocumentAttachment> documents)
             throws FocusPlanningException {
         return importDocuments(documents, null);
+    }
+
+    /**
+     * Builds a complete plan without changing memory or SQLite. The returned
+     * draft can be refined repeatedly and is persisted only by
+     * {@link #confirmDraft(FocusPlanDraft)}.
+     */
+    public FocusPlanDraft previewDocuments(List<DocumentAttachment> documents,
+                                           FocusPreferences requestedPreferences)
+            throws FocusPlanningException {
+        FocusState base;
+        synchronized (this) {
+            base = snapshot();
+        }
+        FocusService sandbox = sandbox(base);
+        if (requestedPreferences != null) {
+            sandbox.setPreferences(requestedPreferences);
+        }
+        FocusPlan preview = sandbox.importDocuments(documents);
+        return new FocusPlanDraft(base, sandbox.snapshot(),
+                "Generated a validated plan with " + preview.sessions().size()
+                        + " sessions.");
+    }
+
+    /** Applies structured AI edits to a sandbox copy and returns a preview. */
+    public FocusPlanDraft previewEdits(List<FocusEditAction> actions, String summary)
+            throws FocusPlanningException {
+        FocusState base;
+        synchronized (this) {
+            base = snapshot();
+        }
+        return previewEdits(new FocusPlanDraft(base, base, ""), actions, summary);
+    }
+
+    /** Refines an existing uncommitted preview without touching committed state. */
+    public FocusPlanDraft previewEdits(FocusPlanDraft draft,
+                                       List<FocusEditAction> actions, String summary)
+            throws FocusPlanningException {
+        Objects.requireNonNull(draft, "draft");
+        FocusService sandbox = sandbox(draft.proposed());
+        sandbox.applyEdits(actions);
+        return new FocusPlanDraft(draft.base(), sandbox.snapshot(), summary);
+    }
+
+    /** Atomically commits an accepted preview if the underlying plan is unchanged. */
+    public synchronized FocusPlan confirmDraft(FocusPlanDraft draft)
+            throws FocusPlanningException {
+        Objects.requireNonNull(draft, "draft");
+        if (!snapshot().equals(draft.base())) {
+            throw new FocusPlanningException(
+                    "The plan changed while this preview was open. Generate the preview again.");
+        }
+        FocusPlan committed = mutate(() -> {
+            restore(draft.proposed());
+            return plan;
+        });
+        undoSnapshot = null;
+        return committed;
+    }
+
+    private FocusService sandbox(FocusState state) {
+        FocusService sandbox = new FocusService(extractor, documentTextExtractor, clock, null);
+        sandbox.restore(state);
+        return sandbox;
     }
 
     /** Rebuilds the plan from the classes, tasks and preferences already loaded. */
@@ -244,8 +314,10 @@ public final class FocusService {
     public synchronized void addClass(ClassSlot classSlot) {
         Objects.requireNonNull(classSlot, "classSlot");
         mutate(() -> {
-            if (!classes.contains(classSlot)) {
-                classes.add(classSlot);
+            ClassSlot resolved = resolveClass(classSlot, subjectDisplayNames());
+            String key = classKey(resolved);
+            if (classes.stream().noneMatch(existing -> classKey(existing).equals(key))) {
+                classes.add(resolved);
             }
             return null;
         });
@@ -258,8 +330,11 @@ public final class FocusService {
     public synchronized void addTask(StudyTask task) {
         Objects.requireNonNull(task, "task");
         mutate(() -> {
-            if (!tasks.contains(task)) {
-                tasks.add(task);
+            StudyTask resolved = resolveTask(task, subjectDisplayNames());
+            String key = FocusFormats.taskKey(resolved.subject(), resolved.title());
+            if (tasks.stream().noneMatch(existing -> FocusFormats.taskKey(
+                    existing.subject(), existing.title()).equals(key))) {
+                tasks.add(resolved);
             }
             return null;
         });
@@ -275,9 +350,10 @@ public final class FocusService {
      */
     public synchronized FocusSession addSession(FocusSession session) throws FocusPlanningException {
         Objects.requireNonNull(session, "session");
-        validatePlacement(session, null);
+        FocusSession resolved = resolveSessionSubject(session, subjectDisplayNames());
+        validatePlacement(resolved, null);
         List<FocusSession> updated = new ArrayList<>(plan.sessions());
-        updated.add(session);
+        updated.add(resolved);
         updated.sort(sessionOrder());
         UndoSnapshot undo = captureUndo();
         mutate(() -> {
@@ -286,7 +362,7 @@ public final class FocusService {
             return null;
         });
         undoSnapshot = undo;
-        return session;
+        return resolved;
     }
 
     /**
@@ -297,6 +373,7 @@ public final class FocusService {
     public synchronized FocusSession updateSession(FocusSession updated)
             throws FocusPlanningException {
         Objects.requireNonNull(updated, "updated");
+        updated = resolveSessionSubject(updated, subjectDisplayNames());
         List<FocusSession> sessions = new ArrayList<>(plan.sessions());
         int index = -1;
         for (int i = 0; i < sessions.size(); i++) {
@@ -310,9 +387,7 @@ public final class FocusService {
         }
         validatePlacement(updated, updated.id());
         FocusSession existing = sessions.get(index);
-        FocusSession merged = updated.completed() || existing.completed()
-                ? updated.asCompleted()
-                : updated;
+        FocusSession merged = updated.withState(existing.state());
         sessions.set(index, merged);
         sessions.sort(sessionOrder());
         UndoSnapshot undo = captureUndo();
@@ -340,6 +415,7 @@ public final class FocusService {
             return List.of(updateSession(updated));
         }
         Objects.requireNonNull(updated, "updated");
+        updated = resolveSessionSubject(updated, subjectDisplayNames());
         List<FocusSession> sessions = new ArrayList<>(plan.sessions());
         int index = -1;
         for (int i = 0; i < sessions.size(); i++) {
@@ -353,11 +429,11 @@ public final class FocusService {
         }
 
         FocusSession original = sessions.get(index);
-        String subjectKey = FocusFormats.comparisonKey(original.subject());
+        String subjectKey = FocusFormats.subjectKey(original.subject());
         List<FocusSession> candidates = new ArrayList<>(sessions.size());
         java.util.Set<String> changed = new java.util.LinkedHashSet<>();
         for (FocusSession session : sessions) {
-            boolean sameSubject = FocusFormats.comparisonKey(session.subject())
+            boolean sameSubject = FocusFormats.subjectKey(session.subject())
                     .equals(subjectKey);
             boolean target = session.id().equals(original.id());
             if (!sameSubject || (session.date().isBefore(today()) && !target)) {
@@ -375,7 +451,8 @@ public final class FocusService {
                     updated.start(),
                     updated.durationMinutes(),
                     updated.priority(),
-                    target ? updated.completed() || session.completed() : session.completed()));
+                    target ? updated.completed() || session.completed() : session.completed(),
+                    session.state()));
             changed.add(session.id());
         }
         for (FocusSession candidate : candidates) {
@@ -397,18 +474,52 @@ public final class FocusService {
     }
 
     public synchronized FocusSession completeSession(String id) throws FocusPlanningException {
+        return setSessionState(id, FocusSessionState.COMPLETED);
+    }
+
+    public synchronized FocusSession skipSession(String id) throws FocusPlanningException {
+        return setSessionState(id, FocusSessionState.SKIPPED);
+    }
+
+    /** Persists a valid lifecycle transition for the Focus timer UI. */
+    public synchronized FocusSession setSessionState(String id, FocusSessionState state)
+            throws FocusPlanningException {
+        Objects.requireNonNull(state, "state");
         List<FocusSession> updated = new ArrayList<>(plan.sessions());
         for (int i = 0; i < updated.size(); i++) {
             FocusSession session = updated.get(i);
             if (session.id().equals(id)) {
-                FocusSession completed = session.asCompleted();
-                updated.set(i, completed);
+                validateStateTransition(session.state(), state);
+                FocusSession changed = session.withState(state);
+                updated.set(i, changed);
                 mutate(() -> plan = new FocusPlan(updated, plan.warnings(), plan.generatedOn()));
                 undoSnapshot = null;
-                return completed;
+                return changed;
             }
         }
         throw new FocusPlanningException("That session is no longer in the plan.");
+    }
+
+    private static void validateStateTransition(FocusSessionState from,
+                                                FocusSessionState to)
+            throws FocusPlanningException {
+        if (from == to) {
+            return;
+        }
+        boolean allowed = switch (from) {
+            case PENDING -> to == FocusSessionState.ACTIVE
+                    || to == FocusSessionState.COMPLETED || to == FocusSessionState.SKIPPED;
+            case ACTIVE -> to == FocusSessionState.PAUSED
+                    || to == FocusSessionState.COMPLETED || to == FocusSessionState.SKIPPED;
+            case PAUSED -> to == FocusSessionState.ACTIVE
+                    || to == FocusSessionState.COMPLETED || to == FocusSessionState.SKIPPED;
+            case COMPLETED, SKIPPED -> false;
+        };
+        if (!allowed) {
+            throw new FocusPlanningException(
+                    "A " + from.label().toLowerCase() + " session cannot become "
+                            + to.label().toLowerCase() + ".");
+        }
     }
 
     /** Removes one session and makes that removal undoable. */
@@ -478,8 +589,14 @@ public final class FocusService {
         for (FocusEditAction action : actions) {
             if (action.type() == FocusEditAction.Type.SET_WINDOW) {
                 targetPreferences = new FocusPreferences(
-                        action.earliest(), action.latest(), targetPreferences.planUntil());
+                        action.earliest(), action.latest(), targetPreferences.planFrom(),
+                        targetPreferences.planUntil(), targetPreferences.breakMinutes(),
+                        targetPreferences.maxSessionMinutes());
                 windowChanged = true;
+            } else if (action.type() == FocusEditAction.Type.SET_BREAK) {
+                targetPreferences = targetPreferences.withBreakMinutes(action.durationMinutes());
+            } else if (action.type() == FocusEditAction.Type.SET_SESSION_LIMIT) {
+                targetPreferences = targetPreferences.withMaxSessionMinutes(action.durationMinutes());
             }
         }
 
@@ -487,16 +604,19 @@ public final class FocusService {
         for (FocusSession session : originalSessions) {
             sessionMap.put(session.id(), session);
         }
+        Map<String, String> displayNames = subjectDisplayNames();
 
         List<FocusSession> addedSessions = new ArrayList<>();
         Set<String> changedIds = new LinkedHashSet<>();
+        List<StudyTask> candidateTasks = new ArrayList<>(tasks);
+        boolean tasksChanged = false;
 
         for (FocusEditAction action : actions) {
             switch (action.type()) {
-                case SET_WINDOW -> {
+                case SET_WINDOW, SET_BREAK, SET_SESSION_LIMIT -> {
                     // Applied to the whole plan through targetPreferences.
                 }
-                case UPDATE, MOVE, RESIZE, CHANGE_SUBJECT -> {
+                case UPDATE, MOVE, RESIZE, CHANGE_SUBJECT, CHANGE_TYPE -> {
                     String targetId = originalSessions.get(action.sessionIndex() - 1).id();
                     FocusSession existing = sessionMap.get(targetId);
                     if (existing == null) {
@@ -504,7 +624,8 @@ public final class FocusService {
                                 "Session " + action.sessionIndex()
                                         + " was already removed by another edit.");
                     }
-                    sessionMap.put(targetId, patch(existing, action));
+                    sessionMap.put(targetId,
+                            resolveSessionSubject(patch(existing, action), displayNames));
                     changedIds.add(targetId);
                 }
                 case REMOVE -> {
@@ -521,7 +642,7 @@ public final class FocusService {
                     }
                     FocusSession newSession = new FocusSession(
                             UUID.randomUUID().toString(),
-                            action.subject().strip(),
+                            resolveSubject(action.subject(), displayNames),
                             action.title().strip(),
                             action.focusType() != null ? action.focusType() : FocusType.QUICK,
                             action.date() != null ? action.date() : today(),
@@ -533,6 +654,63 @@ public final class FocusService {
                     addedSessions.add(newSession);
                     changedIds.add(newSession.id());
                 }
+                case ADD_TASK -> {
+                    String subject = resolveSubject(action.subject(), displayNames);
+                    String title = action.title() == null || action.title().isBlank()
+                            ? "Review class notes" : action.title().strip();
+                    FocusType type = action.focusType() == null
+                            ? FocusType.QUICK : action.focusType();
+                    int minutes = action.durationMinutes() == null
+                            ? type.defaultBlockMinutes() : action.durationMinutes();
+                    StudyTask task = new StudyTask(subject, title, type, minutes,
+                            action.date(), action.priority() == null
+                                    ? Priority.MEDIUM : action.priority());
+                    candidateTasks.removeIf(existing -> FocusFormats.taskKey(
+                            existing.subject(), existing.title()).equals(
+                            FocusFormats.taskKey(subject, title)));
+                    candidateTasks.add(task);
+                    FocusSession newSession = new FocusSession(
+                            UUID.randomUUID().toString(), subject, title, type,
+                            action.date() == null ? today() : action.date(),
+                            action.start() == null ? targetPreferences.earliest() : action.start(),
+                            Math.min(minutes, targetPreferences.maxSessionMinutes()),
+                            task.priority(), false);
+                    addedSessions.add(newSession);
+                    changedIds.add(newSession.id());
+                    tasksChanged = true;
+                }
+                case REMOVE_TASK -> {
+                    String subjectKey = FocusFormats.subjectKey(action.subject());
+                    String titleKey = action.title() == null || action.title().isBlank()
+                            ? null : FocusFormats.comparisonKey(action.title());
+                    candidateTasks.removeIf(task -> FocusFormats.subjectKey(task.subject())
+                            .equals(subjectKey) && (titleKey == null
+                            || FocusFormats.comparisonKey(task.title()).equals(titleKey)));
+                    sessionMap.values().removeIf(session -> !session.state().finished()
+                            && FocusFormats.subjectKey(session.subject()).equals(subjectKey)
+                            && (titleKey == null
+                            || FocusFormats.comparisonKey(session.title()).equals(titleKey)));
+                    tasksChanged = true;
+                }
+                case PRIORITIZE_SUBJECT -> {
+                    String subjectKey = FocusFormats.subjectKey(action.subject());
+                    Priority priority = action.priority() == null
+                            ? Priority.HIGH : action.priority();
+                    candidateTasks.replaceAll(task -> FocusFormats.subjectKey(task.subject())
+                            .equals(subjectKey)
+                            ? new StudyTask(task.subject(), task.title(), task.type(),
+                                    task.estimatedMinutes(), task.deadline(), priority)
+                            : task);
+                    sessionMap.replaceAll((id, session) ->
+                            FocusFormats.subjectKey(session.subject()).equals(subjectKey)
+                                    && !session.state().finished()
+                                    ? new FocusSession(session.id(), session.subject(),
+                                            session.title(), session.type(), session.date(),
+                                            session.start(), session.durationMinutes(), priority,
+                                            session.completed(), session.state())
+                                    : session);
+                    tasksChanged = true;
+                }
             }
         }
 
@@ -540,6 +718,12 @@ public final class FocusService {
         currentSessions.addAll(addedSessions);
 
         for (FocusSession session : currentSessions) {
+            if (!session.state().finished()
+                    && session.durationMinutes() > targetPreferences.maxSessionMinutes()) {
+                throw new FocusPlanningException(
+                        "Session '" + session.title() + "' exceeds the "
+                                + targetPreferences.maxSessionMinutes() + " minute session limit.");
+            }
             if (changedIds.contains(session.id())) {
                 validatePlacement(session, session.id(), currentSessions, targetPreferences);
             } else if (windowChanged && !session.date().isBefore(today())) {
@@ -552,11 +736,16 @@ public final class FocusService {
         currentSessions.sort(sessionOrder());
         FocusPreferences committedPreferences = targetPreferences;
         boolean windowWasChanged = windowChanged;
+        boolean taskDataChanged = tasksChanged;
+        List<StudyTask> committedTasks = List.copyOf(candidateTasks);
         UndoSnapshot undo = captureUndo();
         mutate(() -> {
             preferences = committedPreferences;
             if (windowWasChanged) {
                 preferencesConfigured = true;
+            }
+            if (taskDataChanged) {
+                replaceTasks(committedTasks);
             }
             plan = new FocusPlan(currentSessions, plan.warnings(), plan.generatedOn());
             planEdited = true;
@@ -564,6 +753,20 @@ public final class FocusService {
         });
         undoSnapshot = undo;
         return plan.sessions();
+    }
+
+    private void replaceTasks(List<StudyTask> replacements) {
+        Map<String, String> ids = new LinkedHashMap<>();
+        for (StudyTask task : tasks) {
+            ids.put(FocusFormats.taskKey(task.subject(), task.title()), taskIds.get(task));
+        }
+        tasks.clear();
+        taskIds.clear();
+        for (StudyTask task : replacements) {
+            tasks.add(task);
+            String id = ids.get(FocusFormats.taskKey(task.subject(), task.title()));
+            taskIds.put(task, id == null ? UUID.randomUUID().toString() : id);
+        }
     }
 
     /**
@@ -584,6 +787,7 @@ public final class FocusService {
         mutate(() -> {
             plan = undo.plan();
             preferences = undo.preferences();
+            replaceTasks(undo.tasks());
             preferencesConfigured = undo.preferencesConfigured();
             planEdited = undo.planEdited();
             return null;
@@ -593,7 +797,8 @@ public final class FocusService {
     }
 
     private UndoSnapshot captureUndo() {
-        return new UndoSnapshot(plan, preferences, preferencesConfigured, planEdited);
+        return new UndoSnapshot(plan, preferences, List.copyOf(tasks),
+                preferencesConfigured, planEdited);
     }
 
     /** Builds the patched session for a partial edit, keeping omitted fields. */
@@ -619,7 +824,7 @@ public final class FocusService {
                 start,
                 duration,
                 action.priority() != null ? action.priority() : existing.priority(),
-                existing.completed());
+                existing.completed(), existing.state());
     }
 
     public void addPlanChangeListener(Consumer<FocusPlan> listener) {
@@ -681,7 +886,11 @@ public final class FocusService {
             taskIds.put(entry.value(), entry.id());
         });
         preferences = state.preferences();
-        plan = state.plan();
+        List<FocusSession> restoredSessions = state.plan().sessions().stream()
+                .map(session -> session.state() == FocusSessionState.ACTIVE
+                        ? session.withState(FocusSessionState.PAUSED) : session)
+                .toList();
+        plan = new FocusPlan(restoredSessions, state.plan().warnings(), state.plan().generatedOn());
         // States saved before the flags existed carry no marker. A window that
         // differs from the default was clearly chosen by the user, so reuse it
         // instead of asking again.
@@ -712,12 +921,14 @@ public final class FocusService {
         if (subject == null || subject.isBlank()) {
             return;
         }
-        prioritizedSubjects.add(subject.strip());
+        Map<String, String> displayNames = subjectDisplayNames();
+        String resolved = resolveSubject(subject, displayNames);
+        prioritizedSubjects.add(resolved);
         mutate(() -> {
-            String key = FocusFormats.comparisonKey(subject);
+            String key = FocusFormats.subjectKey(resolved);
             List<StudyTask> updated = new ArrayList<>(tasks.size());
             for (StudyTask task : tasks) {
-                if (FocusFormats.comparisonKey(task.subject()).equals(key)) {
+                if (FocusFormats.subjectKey(task.subject()).equals(key)) {
                     StudyTask boosted = new StudyTask(task.subject(), task.title(), task.type(),
                             task.estimatedMinutes(), task.deadline(), Priority.HIGH);
                     String id = taskIds.remove(task);
@@ -731,7 +942,7 @@ public final class FocusService {
             }
             tasks.clear();
             tasks.addAll(updated);
-            applyExtraTime(List.of(subject), new ArrayList<>());
+            applyExtraTime(List.of(resolved), new ArrayList<>());
             plan = buildPlan(List.of());
             return null;
         });
@@ -742,12 +953,12 @@ public final class FocusService {
         if (subject == null || subject.isBlank()) {
             return;
         }
-        String key = FocusFormats.comparisonKey(subject);
-        prioritizedSubjects.removeIf(s -> FocusFormats.comparisonKey(s).equals(key));
+        String key = FocusFormats.subjectKey(subject);
+        prioritizedSubjects.removeIf(s -> FocusFormats.subjectKey(s).equals(key));
         mutate(() -> {
             List<StudyTask> updated = new ArrayList<>(tasks.size());
             for (StudyTask task : tasks) {
-                if (FocusFormats.comparisonKey(task.subject()).equals(key)) {
+                if (FocusFormats.subjectKey(task.subject()).equals(key)) {
                     StudyTask reset = new StudyTask(task.subject(), task.title(), task.type(),
                             task.estimatedMinutes(), task.deadline(), Priority.MEDIUM);
                     String id = taskIds.remove(task);
@@ -771,12 +982,12 @@ public final class FocusService {
         if (subject == null || subject.isBlank()) {
             return;
         }
-        String key = FocusFormats.comparisonKey(subject);
-        prioritizedSubjects.removeIf(s -> FocusFormats.comparisonKey(s).equals(key));
+        String key = FocusFormats.subjectKey(subject);
+        prioritizedSubjects.removeIf(s -> FocusFormats.subjectKey(s).equals(key));
         mutate(() -> {
-            tasks.removeIf(task -> FocusFormats.comparisonKey(task.subject()).equals(key));
+            tasks.removeIf(task -> FocusFormats.subjectKey(task.subject()).equals(key));
             List<FocusSession> remaining = plan.sessions().stream()
-                    .filter(s -> !FocusFormats.comparisonKey(s.subject()).equals(key))
+                    .filter(s -> !FocusFormats.subjectKey(s.subject()).equals(key))
                     .toList();
             plan = new FocusPlan(remaining, plan.warnings(), plan.generatedOn());
             plan = buildPlan(List.of("Đã loại bỏ môn " + subject + " khỏi kế hoạch học tập."));
@@ -787,10 +998,11 @@ public final class FocusService {
 
     public synchronized void setPrioritizedSubjects(List<String> subjects) {
         prioritizedSubjects.clear();
+        Map<String, String> displayNames = subjectDisplayNames();
         if (subjects != null) {
             for (String s : subjects) {
                 if (s != null && !s.isBlank()) {
-                    prioritizedSubjects.add(s.strip());
+                    prioritizedSubjects.add(resolveSubject(s, displayNames));
                 }
             }
         }
@@ -800,17 +1012,27 @@ public final class FocusService {
         return List.copyOf(prioritizedSubjects);
     }
 
+    /**
+     * One entry per subject, keeping the spelling already used by the plan so
+     * prompts and intent matching still recognise legacy Vietnamese names.
+     */
     public synchronized List<String> subjects() {
-        Set<String> set = new LinkedHashSet<>();
-        tasks.stream().map(StudyTask::subject).filter(Objects::nonNull).forEach(set::add);
-        classes.stream().map(ClassSlot::subject).filter(Objects::nonNull).forEach(set::add);
-        return List.copyOf(set);
+        Map<String, String> unique = new LinkedHashMap<>();
+        tasks.stream().map(StudyTask::subject).filter(Objects::nonNull).forEach(subject ->
+                unique.putIfAbsent(SubjectNames.key(subject), subject));
+        classes.stream().map(ClassSlot::subject).filter(Objects::nonNull).forEach(subject ->
+                unique.putIfAbsent(SubjectNames.key(subject), subject));
+        return List.copyOf(unique.values());
     }
 
     private FocusPlan buildPlan(List<String> notes) {
         FocusPreferences active = preferences;
+        List<FocusSession> history = plan.sessions().stream()
+                .filter(session -> session.state().finished())
+                .toList();
         FocusPlan generated = planner.plan(
-                new FocusPlannerInput(classes, tasks, List.copyOf(prioritizedSubjects)),
+                new FocusPlannerInput(classes, remainingTasksAfterHistory(history),
+                        List.copyOf(prioritizedSubjects)),
                 active,
                 LocalDateTime.now(clock));
         if (active.planUntil() != null || active.planFrom() != null) {
@@ -820,31 +1042,76 @@ public final class FocusService {
         }
         List<String> warnings = new ArrayList<>(notes);
         warnings.addAll(generated.warnings());
-        return new FocusPlan(generated.sessions(), warnings, generated.generatedOn());
+        List<FocusSession> sessions = new ArrayList<>(history);
+        sessions.addAll(generated.sessions());
+        sessions.sort(sessionOrder());
+        return new FocusPlan(sessions, warnings, generated.generatedOn());
     }
 
-    private void mergeClasses(List<ClassSlot> imported) {
-        Set<ClassSlot> unique = new LinkedHashSet<>(classes);
-        unique.addAll(imported);
+    /** Removes already completed minutes from matching work while retaining history. */
+    private List<StudyTask> remainingTasksAfterHistory(List<FocusSession> history) {
+        Map<String, Integer> completedMinutes = new LinkedHashMap<>();
+        for (FocusSession session : history) {
+            if (session.state() == FocusSessionState.COMPLETED) {
+                completedMinutes.merge(FocusFormats.taskKey(session.subject(), session.title()),
+                        session.durationMinutes(), Integer::sum);
+            }
+        }
+        List<StudyTask> remaining = new ArrayList<>();
+        for (StudyTask task : tasks) {
+            String key = FocusFormats.taskKey(task.subject(), task.title());
+            int minutes = Math.max(0, task.estimatedMinutes()
+                    - completedMinutes.getOrDefault(key, 0));
+            if (minutes > 0) {
+                remaining.add(new StudyTask(task.subject(), task.title(), task.type(), minutes,
+                        task.deadline(), task.priority()));
+            }
+        }
+        return remaining;
+    }
+
+    private void mergeClasses(List<ClassSlot> imported, Map<String, String> displayNames) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<ClassSlot> merged = new ArrayList<>(classes.size() + imported.size());
+        for (ClassSlot classSlot : classes) {
+            seen.add(classKey(classSlot));
+            merged.add(classSlot);
+        }
+        for (ClassSlot classSlot : imported) {
+            ClassSlot resolved = resolveClass(classSlot, displayNames);
+            if (seen.add(classKey(resolved))) {
+                merged.add(resolved);
+            }
+        }
         classes.clear();
-        classes.addAll(unique);
+        classes.addAll(merged);
     }
 
     /**
-     * Merges by normalised subject + title, so importing the same task again
+     * Merges by canonical subject + title, so importing the same task again
      * updates its duration or deadline instead of creating a duplicate. A
-     * replaced task keeps its durable id.
+     * replaced task keeps its durable id and the spelling already shown.
      */
-    private void mergeTasks(List<StudyTask> imported) {
+    private void mergeTasks(List<StudyTask> imported, Map<String, String> displayNames) {
         Map<String, StudyTask> merged = new LinkedHashMap<>();
         Map<String, String> ids = new LinkedHashMap<>();
         for (StudyTask task : tasks) {
             String key = FocusFormats.taskKey(task.subject(), task.title());
             ids.putIfAbsent(key, taskIds.get(task));
             merged.put(key, task);
+            displayNames.putIfAbsent(
+                    SubjectNames.key(task.subject()), task.subject());
         }
         for (StudyTask task : imported) {
-            merged.put(FocusFormats.taskKey(task.subject(), task.title()), task);
+            StudyTask resolved = resolveTask(task, displayNames);
+            String key = FocusFormats.taskKey(resolved.subject(), resolved.title());
+            StudyTask existing = merged.get(key);
+            if (existing != null && !existing.subject().equals(resolved.subject())) {
+                resolved = new StudyTask(existing.subject(), resolved.title(),
+                        resolved.type(), resolved.estimatedMinutes(),
+                        resolved.deadline(), resolved.priority());
+            }
+            merged.put(key, resolved);
         }
 
         taskIds.clear();
@@ -862,28 +1129,32 @@ public final class FocusService {
      * plus any explicitly emphasised subject the extraction left uncovered.
      * Existing tasks are never discarded to make room for the review.
      */
-    private void addMissingReviewTasks(List<String> moreTimeSubjects, List<String> notes) {
+    private void addMissingReviewTasks(List<String> moreTimeSubjects, List<String> notes,
+                                       Map<String, String> displayNames) {
         Set<String> subjectsWithTasks = new LinkedHashSet<>();
         for (StudyTask task : tasks) {
-            subjectsWithTasks.add(FocusFormats.comparisonKey(task.subject()));
+            subjectsWithTasks.add(FocusFormats.subjectKey(task.subject()));
         }
 
         Set<String> candidates = new LinkedHashSet<>();
         for (ClassSlot classSlot : classes) {
-            candidates.add(classSlot.subject());
+            candidates.add(resolveSubject(classSlot.subject(), displayNames));
         }
-        candidates.addAll(moreTimeSubjects);
+        if (moreTimeSubjects != null) {
+            candidates.addAll(moreTimeSubjects);
+        }
 
         LocalDate deadline = today().plusDays(FocusPlanner.DEFAULT_HORIZON_DAYS - 1L);
         List<String> added = new ArrayList<>();
         for (String subject : candidates) {
-            if (subject == null || subject.isBlank()
-                    || !subjectsWithTasks.add(FocusFormats.comparisonKey(subject))) {
+            String resolved = resolveSubject(subject, displayNames);
+            if (resolved.isBlank()
+                    || !subjectsWithTasks.add(FocusFormats.subjectKey(resolved))) {
                 continue;
             }
-            tasks.add(new StudyTask(subject, "Review class notes", FocusType.QUICK,
+            tasks.add(new StudyTask(resolved, "Review class notes", FocusType.QUICK,
                     REVIEW_TASK_MINUTES, deadline, Priority.MEDIUM));
-            added.add(subject);
+            added.add(resolved);
         }
         if (!added.isEmpty()) {
             notes.add("Added a review session for " + String.join(", ", added)
@@ -901,7 +1172,7 @@ public final class FocusService {
         }
         Set<String> emphasised = new LinkedHashSet<>();
         for (String subject : moreTimeSubjects) {
-            emphasised.add(FocusFormats.comparisonKey(subject));
+            emphasised.add(FocusFormats.subjectKey(subject));
         }
         if (emphasised.isEmpty()) {
             return;
@@ -910,7 +1181,7 @@ public final class FocusService {
         List<StudyTask> updated = new ArrayList<>(tasks.size());
         Set<String> matched = new LinkedHashSet<>();
         for (StudyTask task : tasks) {
-            if (!emphasised.contains(FocusFormats.comparisonKey(task.subject()))) {
+            if (!emphasised.contains(FocusFormats.subjectKey(task.subject()))) {
                 updated.add(task);
                 continue;
             }
@@ -935,6 +1206,82 @@ public final class FocusService {
             notes.add("Added extra time for " + String.join(", ", matched)
                     + ": each task is 50% longer, or 30 minutes longer if that is more.");
         }
+    }
+
+    /**
+     * First-seen spelling per canonical subject. Existing tasks and sessions
+     * keep their original language while new imports adopt it, so one plan
+     * never shows "Toán" and "Math" as two subjects.
+     */
+    private Map<String, String> subjectDisplayNames() {
+        Map<String, String> names = new LinkedHashMap<>();
+        for (StudyTask task : tasks) {
+            names.putIfAbsent(SubjectNames.key(task.subject()), task.subject());
+        }
+        for (ClassSlot classSlot : classes) {
+            names.putIfAbsent(SubjectNames.key(classSlot.subject()), classSlot.subject());
+        }
+        for (String subject : prioritizedSubjects) {
+            names.putIfAbsent(SubjectNames.key(subject), subject);
+        }
+        for (FocusSession session : plan.sessions()) {
+            names.putIfAbsent(SubjectNames.key(session.subject()), session.subject());
+        }
+        return names;
+    }
+
+    private static List<String> resolveSubjects(List<String> subjects,
+                                                Map<String, String> displayNames) {
+        if (subjects == null || subjects.isEmpty()) {
+            return List.of();
+        }
+        Map<String, String> resolved = new LinkedHashMap<>();
+        for (String subject : subjects) {
+            String name = resolveSubject(subject, displayNames);
+            if (!name.isBlank()) {
+                resolved.putIfAbsent(SubjectNames.key(name), name);
+            }
+        }
+        return List.copyOf(resolved.values());
+    }
+
+    private static String resolveSubject(String subject, Map<String, String> displayNames) {
+        String canonical = SubjectNames.canonical(subject);
+        if (canonical.isBlank()) {
+            return "";
+        }
+        String existing = displayNames.get(SubjectNames.key(canonical));
+        String resolved = existing == null ? canonical : existing;
+        displayNames.putIfAbsent(SubjectNames.key(resolved), resolved);
+        return resolved;
+    }
+
+    private static ClassSlot resolveClass(ClassSlot classSlot,
+                                          Map<String, String> displayNames) {
+        String subject = resolveSubject(classSlot.subject(), displayNames);
+        return subject.equals(classSlot.subject()) ? classSlot
+                : new ClassSlot(subject, classSlot.day(), classSlot.start(), classSlot.end());
+    }
+
+    private static StudyTask resolveTask(StudyTask task, Map<String, String> displayNames) {
+        String subject = resolveSubject(task.subject(), displayNames);
+        return subject.equals(task.subject()) ? task
+                : new StudyTask(subject, task.title(), task.type(), task.estimatedMinutes(),
+                        task.deadline(), task.priority());
+    }
+
+    private static FocusSession resolveSessionSubject(FocusSession session,
+                                                      Map<String, String> displayNames) {
+        String subject = resolveSubject(session.subject(), displayNames);
+        return subject.equals(session.subject()) ? session
+                : new FocusSession(session.id(), subject, session.title(), session.type(),
+                        session.date(), session.start(), session.durationMinutes(),
+                        session.priority(), session.completed(), session.state());
+    }
+
+    private static String classKey(ClassSlot classSlot) {
+        return SubjectNames.key(classSlot.subject()) + '\u0000'
+                + classSlot.day() + '\u0000' + classSlot.start() + '\u0000' + classSlot.end();
     }
 
     private static int extraMinutes(int current) {
@@ -1003,7 +1350,7 @@ public final class FocusService {
                 .thenComparing(FocusSession::subject, String.CASE_INSENSITIVE_ORDER);
     }
 
-    /** Convenience factory used by the Focus panel for a manual session. */
+    /** Convenience factory used by the Study panel for a manual session. */
     public static FocusSession newManualSession(String subject, String title, FocusType type,
                                                 LocalDate date, java.time.LocalTime start,
                                                 int minutes) {

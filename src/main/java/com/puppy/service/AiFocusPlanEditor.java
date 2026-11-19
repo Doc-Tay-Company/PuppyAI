@@ -19,7 +19,7 @@ import java.util.Objects;
 
 /**
  * Asks the selected AI model to interpret an edit request against the current
- * focus plan and return structured JSON actions.
+ * Study plan and return structured JSON actions.
  *
  * <p>The model receives the full plan context (numbered session list, classes,
  * preferences) and the user's natural-language request. It returns a JSON
@@ -40,7 +40,7 @@ public final class AiFocusPlanEditor {
             DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH);
 
     private static final String SYSTEM_PROMPT = """
-            You are Puppy's focus-plan editor. The user already has a focus plan with
+            You are Puppy's Study editor. The user already has a study plan with
             scheduled study sessions. They want to change it.
 
             You will receive:
@@ -58,15 +58,24 @@ public final class AiFocusPlanEditor {
                 {"type": "CHANGE_SUBJECT", "sessionIndex": 4, "subject": "Physics",
                  "title": "Review chapter 4"},
                 {"type": "ADD", "subject": "Chemistry", "title": "Lab review",
-                 "focusType": "DEEP", "date": "2026-11-21", "start": "14:00",
+                 "date": "2026-11-21", "start": "14:00",
                  "durationMinutes": 50, "priority": "MEDIUM"},
-                {"type": "SET_WINDOW", "earliest": "18:00", "latest": "22:00"}
+                {"type": "SET_WINDOW", "earliest": "18:00", "latest": "22:00"},
+                {"type": "SET_BREAK", "durationMinutes": 15},
+                {"type": "SET_SESSION_LIMIT", "durationMinutes": 60},
+                {"type": "ADD_TASK", "subject": "Chemistry", "title": "Review acids",
+                 "date": "2026-11-22", "start": "18:00",
+                 "durationMinutes": 25, "priority": "MEDIUM"},
+                {"type": "REMOVE_TASK", "subject": "History", "title": "Read chapter 2"},
+                {"type": "PRIORITIZE_SUBJECT", "subject": "Math", "priority": "HIGH"}
               ],
               "summary": "Moved the Math session to 19:00."
             }
 
             Rules:
             - Use MOVE to change a session's date and/or start time.
+            - Rearrange session order with the minimum set of MOVE actions; preserve every
+              unaffected session and never overlap the moved sessions.
             - Use RESIZE to change only a session's duration.
             - Use REMOVE to delete a session.
             - Use CHANGE_SUBJECT to rename the subject; include "title" only when the
@@ -74,6 +83,17 @@ public final class AiFocusPlanEditor {
             - Use ADD for a new session with subject, title, date, start and duration.
             - Use SET_WINDOW only when the user asks to change their free time. Include
               both "earliest" and "latest". All sessions must still fit inside it.
+            - Use SET_BREAK to change the break between generated sessions.
+            - Use SET_SESSION_LIMIT to cap the length of one study session.
+            - Do not classify sessions by focus type. Do not return "focusType" or CHANGE_TYPE.
+            - For a requested total study time, resize only pending sessions so their
+              combined duration matches the request. Preserve completed/skipped history.
+            - Use ADD_TASK to add durable task data plus its first scheduled session.
+              Include subject, title, date, start, duration and priority.
+            - Use REMOVE_TASK to remove a task and its pending sessions. A subject with
+              no title removes all its pending tasks; completed/skipped history stays.
+            - Use PRIORITIZE_SUBJECT to change the priority of that subject's tasks and
+              sessions without changing unrelated work.
             - UPDATE is accepted as a general patch, but prefer the specific action.
             - "sessionIndex" is the 1-based number from the session list. Required for
               every session action; ignored for ADD and SET_WINDOW.
@@ -118,7 +138,7 @@ public final class AiFocusPlanEditor {
      * Sends the current plan and the user's edit request to the AI model and
      * returns parsed edit actions.
      *
-     * @param plan        the current focus plan with sessions
+     * @param context     the current study plan, classes and preferences
      * @param classes     the user's weekly class schedule
      * @param preferences the user's free-time window
      * @param userRequest the natural-language edit request
@@ -175,6 +195,10 @@ public final class AiFocusPlanEditor {
                 .append(" - ").append(TIME.format(preferences.latest()))
                 .append(context.preferencesConfigured()
                         ? "\n\n" : " (default; the user has not chosen one yet)\n\n");
+        prompt.append("Break between sessions: ")
+                .append(preferences.breakMinutes()).append(" minutes\n")
+                .append("Maximum session length: ")
+                .append(preferences.maxSessionMinutes()).append(" minutes\n\n");
 
         // Class schedule
         List<ClassSlot> classes = context.classes();
@@ -203,9 +227,8 @@ public final class AiFocusPlanEditor {
                         .append("-").append(TIME.format(session.end()))
                         .append(" | ").append(session.subject())
                         .append(": ").append(session.title())
-                        .append(" (").append(session.type().label())
-                        .append(", ").append(session.durationMinutes()).append("m")
-                        .append(session.completed() ? ", completed" : "")
+                        .append(" (").append(session.durationMinutes()).append("m")
+                        .append(", ").append(session.state().name().toLowerCase(Locale.ROOT))
                         .append(")\n");
             }
             prompt.append("\n");
