@@ -13,13 +13,6 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo 2. Running tests...
-call mvn test
-if %ERRORLEVEL% neq 0 (
-    echo Some tests failed. You can still launch the app if you want.
-)
-
-echo.
 echo 3. Launching Puppy AI...
 call mvn javafx:run
 
