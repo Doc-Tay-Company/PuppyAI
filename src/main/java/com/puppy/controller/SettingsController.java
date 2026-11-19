@@ -1,6 +1,6 @@
 package com.puppy.controller;
 
-import com.puppy.ai.AiModel;
+import com.puppy.ai.AiException;
 import com.puppy.database.PersistenceException;
 import com.puppy.service.AppSettingsService;
 import com.puppy.service.ModelService;
@@ -8,14 +8,13 @@ import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -34,7 +33,16 @@ public class SettingsController {
     private CheckBox alwaysOnTopCheck;
 
     @FXML
-    private ComboBox<AiModel> modelChoice;
+    private TextField openRouterModelField;
+
+    @FXML
+    private Button saveOpenRouterModelButton;
+
+    @FXML
+    private Button testOpenRouterConnectionButton;
+
+    @FXML
+    private Button useLocalModelButton;
 
     @FXML
     private Label modelLocationPill;
@@ -97,16 +105,18 @@ public class SettingsController {
     private Runnable minimizeAction;
     private Runnable menuAction;
     private Runnable layoutChanged;
-    private boolean refreshingModelChoice;
     private java.util.concurrent.ExecutorService executor;
     private com.puppy.service.AppSettingsService appSettings;
     private boolean savingInstructions;
     private String instructionsFeedback = "";
     private boolean instructionsError;
+    private boolean testingConnection;
 
     @FXML
     public void initialize() {
         instructionsSection.setDisable(true);
+        openRouterModelField.textProperty().addListener(
+                (observable, oldText, text) -> updateModelActions());
         instructionsInput.textProperty().addListener((observable, oldText, text) -> {
             instructionsFeedback = "";
             instructionsError = false;
@@ -208,6 +218,8 @@ public class SettingsController {
             try {
                 action.run();
                 runOnUi(success);
+            } catch (IllegalArgumentException e) {
+                runOnUi(() -> showStatus(e.getMessage(), true));
             } catch (IOException | RuntimeException e) {
                 runOnUi(() -> {
                     refreshAiSection();
@@ -248,6 +260,7 @@ public class SettingsController {
         this.menuAction = Objects.requireNonNull(menuAction, "menuAction");
         this.layoutChanged = Objects.requireNonNull(layoutChanged, "layoutChanged");
         alwaysOnTopCheck.setSelected(alwaysOnTop);
+        openRouterModelField.setText(modelService.openRouterModelName());
         localModelLabel.setText("Model: " + modelService.localModelDescription());
         ollamaUrlLabel.setText("Server: " + modelService.localServer());
         versionLabel.setText("Version " + appVersion);
@@ -258,19 +271,7 @@ public class SettingsController {
         if (modelService == null) {
             return;
         }
-        List<AiModel> models = modelService.availableModels();
-        AiModel selected = modelService.selectedModel();
-
-        refreshingModelChoice = true;
-        try {
-            modelChoice.getItems().setAll(models);
-            modelChoice.setValue(models.stream()
-                    .filter(model -> model.id().equals(selected.id()))
-                    .findFirst()
-                    .orElse(null));
-        } finally {
-            refreshingModelChoice = false;
-        }
+        var selected = modelService.selectedModel();
 
         boolean cloud = selected.cloud();
         modelLocationPill.setText(cloud ? "Cloud" : "Local");
@@ -293,7 +294,7 @@ public class SettingsController {
         } else {
             modelHintLabel.setText(
                     "The local model needs no API key and keeps chat on this computer. Choose an "
-                            + "OpenRouter model above for cloud replies.");
+                            + "OpenRouter model ID above for cloud replies.");
         }
 
         openRouterKeySection.setVisible(cloud);
@@ -303,6 +304,7 @@ public class SettingsController {
         } else {
             openRouterKeyField.clear();
         }
+        updateModelActions();
         notifyLayoutChanged();
     }
 
@@ -322,6 +324,7 @@ public class SettingsController {
             openRouterKeyHint.setText(
                     "Puppy reads OPENROUTER_API_KEY or PUPPY_OPENROUTER_API_KEY at startup. "
                             + "Remove it from the environment to manage the key here.");
+            updateModelActions();
             return;
         }
 
@@ -344,6 +347,21 @@ public class SettingsController {
                     "The key is stored only on this computer in Puppy's local data folder, never "
                             + "in the project. The local model needs no key.");
         }
+        updateModelActions();
+    }
+
+    private void updateModelActions() {
+        if (openRouterModelField == null) {
+            return;
+        }
+        boolean modelIdPresent = !openRouterModelField.getText().isBlank();
+        boolean cloudSelected = modelService != null && modelService.isCloud();
+        saveOpenRouterModelButton.setDisable(modelService == null || testingConnection
+                || !modelIdPresent || (cloudSelected
+                && openRouterModelField.getText().strip().equals(modelService.modelName())));
+        testOpenRouterConnectionButton.setDisable(modelService == null || testingConnection
+                || !modelIdPresent || !modelService.hasOpenRouterKey());
+        useLocalModelButton.setDisable(modelService == null || testingConnection || !cloudSelected);
     }
 
     private void notifyLayoutChanged() {
@@ -364,24 +382,79 @@ public class SettingsController {
     }
 
     @FXML
-    private void onModelChanged() {
-        if (refreshingModelChoice || modelService == null) {
+    private void onSaveOpenRouterModel() {
+        if (modelService == null) {
             return;
         }
-        AiModel chosen = modelChoice.getValue();
-        if (chosen == null) {
+        String modelName = openRouterModelField.getText().strip();
+        if (modelName.isEmpty()) {
+            showStatus("Enter an OpenRouter model ID first.", true);
             return;
         }
-        saveSetting(() -> modelService.selectModel(chosen.id()), () -> {
+        saveSetting(() -> modelService.selectOpenRouterModel(modelName), () -> {
             refreshAiSection();
-            if (chosen.cloud() && !modelService.hasOpenRouterKey()) {
-                showStatus("Selected " + chosen.displayName()
-                        + ". Add your OpenRouter API key below.", false);
+            if (!modelService.hasOpenRouterKey()) {
+                showStatus("OpenRouter model selected. Add an API key below to use it.", false);
             } else {
-                showStatus("Now using " + chosen.displayName()
-                        + " (" + chosen.locationLabel() + ").", false);
+                showStatus("Now using OpenRouter model " + modelName + ".", false);
             }
         });
+    }
+
+    @FXML
+    private void onUseLocalModel() {
+        if (modelService == null) {
+            return;
+        }
+        saveSetting(modelService::selectLocalModel, () -> {
+            refreshAiSection();
+            showStatus("Now using the local Ollama model.", false);
+        });
+    }
+
+    @FXML
+    private void onTestOpenRouterConnection() {
+        if (modelService == null) {
+            showStatus("AI settings are not available yet. Please reopen Settings.", true);
+            return;
+        }
+        String modelName = openRouterModelField.getText().strip();
+        if (modelName.isEmpty()) {
+            showStatus("Enter an OpenRouter model ID first.", true);
+            return;
+        }
+        if (!modelService.hasOpenRouterKey()) {
+            showStatus("Save an OpenRouter API key before testing the connection.", true);
+            return;
+        }
+        if (executor == null) {
+            showStatus("Connection testing is not available yet. Please reopen Settings.", true);
+            return;
+        }
+
+        testingConnection = true;
+        updateModelActions();
+        showStatus("Testing the OpenRouter API key and model...", false);
+        try {
+            executor.submit(() -> {
+                try {
+                    modelService.testOpenRouterConnection(modelName);
+                    runOnUi(() -> finishConnectionTest(
+                            "Connection successful. The API key and model responded.", false));
+                } catch (AiException | IllegalArgumentException e) {
+                    runOnUi(() -> finishConnectionTest(e.getMessage(), true));
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            finishConnectionTest(
+                    "The application is shutting down. The connection test did not run.", true);
+        }
+    }
+
+    private void finishConnectionTest(String message, boolean error) {
+        testingConnection = false;
+        updateModelActions();
+        showStatus(message, error);
     }
 
     @FXML

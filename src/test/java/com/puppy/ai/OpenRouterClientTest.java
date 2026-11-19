@@ -104,6 +104,27 @@ class OpenRouterClientTest {
     }
 
     @Test
+    void connectionTestSendsASmallNonJsonCompletion() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        AtomicReference<String> authorization = new AtomicReference<>();
+        server.createContext("/api/v1/chat/completions", exchange -> {
+            requestBody.set(readBody(exchange));
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            respondJson(exchange, 200,
+                    "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}");
+        });
+
+        client().testConnection();
+
+        assertEquals("Bearer " + TEST_KEY, authorization.get());
+        assertTrue(requestBody.get().contains("\"model\":\"google/gemini-test\""));
+        assertTrue(requestBody.get().contains("\"stream\":false"));
+        assertTrue(requestBody.get().contains("\"max_tokens\":128"));
+        assertFalse(requestBody.get().contains("response_format"),
+                "Connection tests must work with models that do not support JSON mode");
+    }
+
+    @Test
     void reportsInvalidKeysWithoutEchoingThem() throws Exception {
         server.createContext("/api/v1/chat/completions", exchange ->
                 respondJson(exchange, 401,

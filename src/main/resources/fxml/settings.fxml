@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.CheckBox?>
-<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.PasswordField?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.VBox?>
@@ -26,9 +26,16 @@
                         <Region HBox.hgrow="ALWAYS" />
                         <Label fx:id="modelLocationPill" text="Local" styleClass="status-pill" />
                     </HBox>
-                    <ComboBox fx:id="modelChoice" maxWidth="Infinity" styleClass="settings-field" onAction="#onModelChanged" />
                     <Label fx:id="modelDetailLabel" text="Model" styleClass="muted-copy" wrapText="true" />
                     <Label fx:id="modelHintLabel" text="Choose the model Puppy should use." styleClass="muted-copy" wrapText="true" />
+                    <Label text="OpenRouter model ID" styleClass="section-title" />
+                    <TextField fx:id="openRouterModelField" promptText="provider/model-id" maxWidth="Infinity" styleClass="settings-field" onAction="#onSaveOpenRouterModel" />
+                    <Label text="Testing sends a short request to OpenRouter and may incur provider usage." styleClass="muted-copy" wrapText="true" />
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <Button fx:id="saveOpenRouterModelButton" text="Use OpenRouter model" onAction="#onSaveOpenRouterModel" styleClass="quiet-button" />
+                        <Button fx:id="testOpenRouterConnectionButton" text="Test connection" onAction="#onTestOpenRouterConnection" styleClass="quiet-button" />
+                        <Button fx:id="useLocalModelButton" text="Use local model" onAction="#onUseLocalModel" styleClass="quiet-button" />
+                    </HBox>
                     <Label fx:id="aiStatusLabel" text="" styleClass="muted-copy" wrapText="true" managed="false" visible="false" />
                 </VBox>
                 <VBox fx:id="openRouterKeySection" styleClass="settings-section" spacing="6" managed="false" visible="false">

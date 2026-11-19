@@ -37,6 +37,7 @@ public final class ModelService {
     private AiModel selectedModel;
     private ChatProvider provider;
     private String openRouterKey;
+    private String savedOpenRouterModelName;
     private boolean openRouterKeyFromEnvironment;
 
     public ModelService(AppConfig config, AiSettingsStore store) {
@@ -99,6 +100,21 @@ public final class ModelService {
         }
     }
 
+    public String openRouterModelName() {
+        synchronized (lock) {
+            if (savedOpenRouterModelName != null) {
+                return savedOpenRouterModelName;
+            }
+            return selectedModel.cloud()
+                    ? selectedModel.modelName()
+                    : availableModels.stream()
+                            .filter(AiModel::cloud)
+                            .findFirst()
+                            .orElseThrow()
+                            .modelName();
+        }
+    }
+
     public String providerName() {
         synchronized (lock) {
             return selectedModel.providerName();
@@ -149,6 +165,47 @@ public final class ModelService {
             store.saveSelectedModelId(model.id());
             refreshLocked();
         }
+    }
+
+    public void selectOpenRouterModel(String modelName) throws IOException {
+        String cleaned = validateOpenRouterModelName(modelName);
+        synchronized (lock) {
+            store.saveOpenRouterModelId(cleaned);
+            store.saveSelectedModelId(AiModels.OPENROUTER_PROVIDER + ":" + cleaned);
+            refreshLocked();
+        }
+    }
+
+    public void selectLocalModel() throws IOException {
+        synchronized (lock) {
+            AiModel local = localModelLocked();
+            store.saveSelectedModelId(local.id());
+            refreshLocked();
+        }
+    }
+
+    public void testOpenRouterConnection(String modelName) throws AiException {
+        String cleaned = validateOpenRouterModelName(modelName);
+        String key;
+        synchronized (lock) {
+            key = openRouterKey;
+        }
+        if (key == null) {
+            throw new AiException(AiException.Reason.AUTHENTICATION,
+                    "Save an OpenRouter API key in Settings before testing the connection.");
+        }
+        new OpenRouterClient(key, cleaned, config.openRouterBaseUrl()).testConnection();
+    }
+
+    private static String validateOpenRouterModelName(String modelName) {
+        Objects.requireNonNull(modelName, "modelName");
+        String cleaned = modelName.strip();
+        if (cleaned.isEmpty() || cleaned.length() > 512
+                || cleaned.chars().anyMatch(Character::isWhitespace)) {
+            throw new IllegalArgumentException(
+                    "Enter a valid OpenRouter model ID without spaces (up to 512 characters).");
+        }
+        return cleaned;
     }
 
     public void saveOpenRouterKey(String apiKey) throws IOException {
@@ -209,14 +266,27 @@ public final class ModelService {
 
         List<AiModel> catalog = AiModels.catalog(config.ollamaModel());
         availableModels = catalog;
+        savedOpenRouterModelName = store.openRouterModelId().orElse(null);
 
         String savedId = store.selectedModelId().orElse(null);
         AiModel chosen = availableModels.stream()
                 .filter(model -> model.id().equals(savedId))
                 .findFirst()
+                .or(() -> customOpenRouterModel(savedId))
                 .orElseGet(this::defaultModelLocked);
         selectedModel = chosen;
         provider = createProviderLocked(chosen);
+    }
+
+    private java.util.Optional<AiModel> customOpenRouterModel(String savedId) {
+        String prefix = AiModels.OPENROUTER_PROVIDER + ":";
+        if (savedId == null || !savedId.startsWith(prefix)
+                || savedId.length() == prefix.length()) {
+            return java.util.Optional.empty();
+        }
+        String modelName = savedId.substring(prefix.length());
+        return java.util.Optional.of(new AiModel(savedId, AiModels.OPENROUTER_PROVIDER,
+                "OpenRouter", modelName, modelName, true));
     }
 
     /** Cloud-first default when a key exists, local otherwise. */

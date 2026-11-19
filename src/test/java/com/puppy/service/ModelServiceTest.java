@@ -100,6 +100,35 @@ class ModelServiceTest {
     }
 
     @Test
+    void acceptsCustomOpenRouterModelIdsAndKeepsThemWhenSwitchingLocal() throws Exception {
+        AiSettingsStore store = new AiSettingsStore(tempDirectory);
+        ModelService service = service(null, store);
+        String customModelId = "vendor/custom-model:free";
+
+        service.selectOpenRouterModel(customModelId);
+
+        assertTrue(service.isCloud());
+        assertEquals(customModelId, service.modelName());
+        assertEquals(customModelId, service.openRouterModelName());
+
+        service.selectLocalModel();
+        ModelService restarted = service(null, new AiSettingsStore(tempDirectory));
+
+        assertFalse(restarted.isCloud());
+        assertEquals(customModelId, restarted.openRouterModelName());
+        restarted.selectOpenRouterModel(restarted.openRouterModelName());
+        assertEquals(customModelId, restarted.modelName());
+    }
+
+    @Test
+    void rejectsCustomOpenRouterModelIdsContainingSpaces() {
+        ModelService service = service(null, new AiSettingsStore(tempDirectory));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.selectOpenRouterModel("vendor/model name"));
+    }
+
+    @Test
     void clearingTheKeyKeepsTheCloudChoiceAndSavingANewKeyRestoresReplies()
             throws Exception {
         AiSettingsStore store = new AiSettingsStore(tempDirectory);

@@ -45,6 +45,7 @@ public final class OpenRouterClient implements ChatProvider {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration CONNECTION_TEST_TIMEOUT = Duration.ofSeconds(30);
     private static final int CHAT_OUTPUT_TOKENS = 4_096;
     private static final int JSON_OUTPUT_TOKENS = 8_192;
     private static final double CHAT_TEMPERATURE = 0.6;
@@ -135,7 +136,8 @@ public final class OpenRouterClient implements ChatProvider {
     public String chat(List<ChatMessage> messages, Consumer<String> onToken) throws AiException {
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(onToken, "onToken");
-        HttpRequest request = request(messages, true);
+        HttpRequest request = request(messages, true, false, CHAT_OUTPUT_TOKENS,
+                CHAT_TEMPERATURE, REQUEST_TIMEOUT);
         HttpResponse<InputStream> response = send(request);
         if (response.statusCode() != 200) {
             throw errorFor(response.statusCode(), readErrorBody(response.body()));
@@ -146,7 +148,8 @@ public final class OpenRouterClient implements ChatProvider {
     @Override
     public String jsonChat(List<ChatMessage> messages) throws AiException {
         Objects.requireNonNull(messages, "messages");
-        HttpRequest request = request(messages, false);
+        HttpRequest request = request(messages, false, true, JSON_OUTPUT_TOKENS,
+                JSON_TEMPERATURE, REQUEST_TIMEOUT);
         HttpResponse<String> response = sendString(request);
         if (response.statusCode() != 200) {
             throw errorFor(response.statusCode(), response.body());
@@ -154,10 +157,23 @@ public final class OpenRouterClient implements ChatProvider {
         return readSingle(response.body());
     }
 
-    private HttpRequest request(List<ChatMessage> messages, boolean streaming) throws AiException {
-        byte[] body = requestBody(messages, streaming);
+    /** Sends a minimal completion to verify both the key and selected model. */
+    public void testConnection() throws AiException {
+        HttpRequest request = request(List.of(ChatMessage.user("Reply with OK.")), false,
+                false, 128, 0, CONNECTION_TEST_TIMEOUT);
+        HttpResponse<String> response = sendString(request);
+        if (response.statusCode() != 200) {
+            throw errorFor(response.statusCode(), response.body());
+        }
+        readSingle(response.body());
+    }
+
+    private HttpRequest request(List<ChatMessage> messages, boolean streaming,
+                                boolean jsonMode, int maxTokens, double temperature,
+                                Duration timeout) throws AiException {
+        byte[] body = requestBody(messages, streaming, jsonMode, maxTokens, temperature);
         return HttpRequest.newBuilder(completionsUri)
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .header("Accept", streaming ? "text/event-stream" : "application/json")
                 .header("Authorization", "Bearer " + apiKey)
@@ -166,7 +182,9 @@ public final class OpenRouterClient implements ChatProvider {
                 .build();
     }
 
-    private byte[] requestBody(List<ChatMessage> messages, boolean streaming) throws AiException {
+    private byte[] requestBody(List<ChatMessage> messages, boolean streaming,
+                               boolean jsonMode, int maxTokens, double temperature)
+            throws AiException {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", model);
         ArrayNode contents = root.putArray("messages");
@@ -191,9 +209,9 @@ public final class OpenRouterClient implements ChatProvider {
         }
 
         root.put("stream", streaming);
-        root.put("temperature", streaming ? CHAT_TEMPERATURE : JSON_TEMPERATURE);
-        root.put("max_tokens", streaming ? CHAT_OUTPUT_TOKENS : JSON_OUTPUT_TOKENS);
-        if (!streaming) {
+        root.put("temperature", temperature);
+        root.put("max_tokens", maxTokens);
+        if (jsonMode) {
             root.putObject("response_format").put("type", "json_object");
         }
 

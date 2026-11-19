@@ -28,6 +28,7 @@ public final class AiSettingsStore {
     static final String SECRETS_FILE = "ai-secrets.properties";
     private static final String SELECTED_MODEL_KEY = "selectedModel";
     private static final String OPENROUTER_KEY = "openrouter.apiKey";
+    private static final String OPENROUTER_MODEL_KEY = "openrouter.modelId";
 
     private final Path dataDirectory;
     private final Path settingsFile;
@@ -90,6 +91,31 @@ public final class AiSettingsStore {
         } else {
             repository.put(SELECTED_MODEL_KEY, cleaned);
             selectedModel = Optional.of(cleaned);
+        }
+    }
+
+    public Optional<String> openRouterModelId() {
+        if (repository != null) {
+            return repository.get(OPENROUTER_MODEL_KEY);
+        }
+        return Optional.ofNullable(read(settingsFile).getProperty(OPENROUTER_MODEL_KEY))
+                .map(String::strip)
+                .filter(value -> !value.isEmpty());
+    }
+
+    public void saveOpenRouterModelId(String modelId) throws IOException {
+        String cleaned = modelId == null ? "" : modelId.strip();
+        if (cleaned.isEmpty()) {
+            throw new IllegalArgumentException("An OpenRouter model ID is required.");
+        }
+        if (cleaned.length() > 512 || cleaned.chars().anyMatch(Character::isWhitespace)) {
+            throw new IllegalArgumentException(
+                    "Enter a valid OpenRouter model ID without spaces (up to 512 characters).");
+        }
+        if (repository == null) {
+            writeProperty(settingsFile, OPENROUTER_MODEL_KEY, cleaned);
+        } else {
+            repository.put(OPENROUTER_MODEL_KEY, cleaned);
         }
     }
 
