@@ -34,10 +34,11 @@ import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ComboBox;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.MenuButton;
 import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
@@ -83,10 +84,8 @@ public class ChatController {
     /** What the composer option does when Send is pressed. */
     enum ComposerMode {
         CHAT("Chat"),
-        FOCUS("Focus plan"),
-        QUIZ("Multiple Quiz"),
-        MODEL("Model"),
-        HELP("Help");
+        FOCUS("Focus mode"),
+        QUIZ("Multiple Quiz");
 
         private final String label;
 
@@ -125,7 +124,15 @@ public class ChatController {
     private Button attachButton;
 
     @FXML
-    private ComboBox<ComposerMode> modeChoice;
+    private MenuButton actionsButton;
+
+    @FXML
+    private CheckMenuItem quizModeItem;
+
+    @FXML
+    private CheckMenuItem focusModeItem;
+
+    private ComposerMode composerMode = ComposerMode.CHAT;
 
     @FXML
     private ScrollPane messageScroll;
@@ -199,9 +206,7 @@ public class ChatController {
     @FXML
     public void initialize() {
         loadChatMascot();
-        modeChoice.getItems().setAll(ComposerMode.values());
-        modeChoice.setValue(ComposerMode.CHAT);
-        modeChoice.setTooltip(new Tooltip("Choose what Send should do"));
+        resetComposerMode();
         attachButton.setTooltip(new Tooltip("Attach a document"));
         streamTicker = new Timeline(new KeyFrame(STREAM_TICK, event -> flushPendingTokens()));
         streamTicker.setCycleCount(Timeline.INDEFINITE);
@@ -266,8 +271,7 @@ public class ChatController {
             return;
         }
 
-        ComposerMode mode = modeChoice.getValue() == null
-                ? ComposerMode.CHAT : modeChoice.getValue();
+        ComposerMode mode = composerMode;
         String raw = messageInput.getText();
         String message = raw == null ? "" : raw.strip();
         boolean action = mode != ComposerMode.CHAT;
@@ -275,6 +279,7 @@ public class ChatController {
             return;
         }
 
+        clearTransientStatus();
         messageInput.clear();
         stopMascotReaction();
 
@@ -288,16 +293,6 @@ public class ChatController {
                 if (startFocus(message)) {
                     resetComposerMode();
                 }
-                messageInput.requestFocus();
-            }
-            case MODEL -> {
-                answerLocalCommand(ComposerMode.MODEL, modelCommandReply());
-                resetComposerMode();
-                messageInput.requestFocus();
-            }
-            case HELP -> {
-                answerLocalCommand(ComposerMode.HELP, helpReply());
-                resetComposerMode();
                 messageInput.requestFocus();
             }
             case CHAT -> {
@@ -737,20 +732,34 @@ public class ChatController {
         }
     }
 
-    private void answerLocalCommand(ComposerMode mode, String reply) {
-        addMessage("user", mode.toString(), List.of());
-        addMessage("assistant", reply, List.of());
-        if (mascotStateService.getState() == MascotState.THINKING
-                || mascotStateService.getState() == MascotState.TALKING) {
-            mascotStateService.resetToIdle();
-        }
-        scrollToBottom();
+    @FXML
+    private void selectQuizMode() {
+        selectComposerMode(composerMode == ComposerMode.QUIZ ? ComposerMode.CHAT : ComposerMode.QUIZ);
+        messageInput.requestFocus();
+    }
+
+    @FXML
+    private void selectFocusMode() {
+        selectComposerMode(composerMode == ComposerMode.FOCUS ? ComposerMode.CHAT : ComposerMode.FOCUS);
+        messageInput.requestFocus();
+    }
+
+    private void selectComposerMode(ComposerMode mode) {
+        composerMode = mode;
+        quizModeItem.setSelected(mode == ComposerMode.QUIZ);
+        focusModeItem.setSelected(mode == ComposerMode.FOCUS);
+        messageInput.setPromptText(switch (mode) {
+            case CHAT -> "Ask me anything";
+            case QUIZ -> "Describe your quiz topic or attach a document";
+            case FOCUS -> "Describe what you want to study or attach a timetable";
+        });
+        actionsButton.setTooltip(new Tooltip(mode == ComposerMode.CHAT
+                ? "Add a quiz or focus request" : mode + " selected; select again to return to Chat"));
+        actionsButton.setAccessibleText("Chat actions: " + mode);
     }
 
     private void resetComposerMode() {
-        if (modeChoice != null) {
-            modeChoice.setValue(ComposerMode.CHAT);
-        }
+        selectComposerMode(ComposerMode.CHAT);
     }
 
     /**
@@ -777,7 +786,7 @@ public class ChatController {
             case "/model" -> modelCommandReply();
             case "/help" -> helpReply();
             default -> "I don't know `" + input.strip()
-                    + "` yet. Choose an option next to the message box, or try Chat.";
+                    + "` yet. Use **+** for Quiz or Focus, or type a normal chat message.";
         };
 
         addMessage("user", input, List.of());
@@ -794,14 +803,13 @@ public class ChatController {
         return """
                 **Puppy options**
 
-                Choose an option next to the message box, then press Send.
+                Use **+** beside the attachment button, then press Send.
 
-                - **Focus plan** - read your pinned files or typed subject description
                 - **Multiple Quiz** - create 1-20 learning questions from a topic or pinned files (default 5, Medium)
-                - **Model** - show the selected model and provider
-                - **Help** - show this list
+                - **Focus mode** - read your pinned files or typed subject description
 
-                **Chat** sends everything else to the selected model.
+                Select the same action again to return to normal Chat. Actions reset after sending.
+                **/model** shows the selected model and provider; **/help** shows this list.
 
                 Right-click a message to copy it, or use **Copy** / **Reuse** under your
                 requests. **Ctrl+V** pastes into the message box.
@@ -814,8 +822,7 @@ public class ChatController {
     }
 
     /**
-     * Slash-command entry point kept for keyboard users. The option next to the
-     * message box is the normal path now.
+     * Slash-command entry point kept for keyboard users alongside the + menu.
      */
     private void startFocusCommand(String input) {
         String description = input.strip().substring("/focus".length()).strip();
@@ -970,7 +977,7 @@ public class ChatController {
                 **Focus needs a file or a description**
 
                 Pin your timetable, subject list or assignment sheet with the 📌 button, or type
-                the subjects you want planned. Then choose **Focus plan** and press Send.
+                the subjects you want planned. Then choose **+ > Focus mode** and press Send.
 
                 Tell me how the subject feels - important, difficult, or not fully mastered -
                 and I'll book longer Deep focus sessions. Light review and reading stay Quick.
@@ -1465,7 +1472,10 @@ public class ChatController {
         boolean busy = responding || extracting || preparingToQuit;
         sendButton.setDisable(busy);
         attachButton.setDisable(busy);
-        modeChoice.setDisable(busy);
+        actionsButton.setDisable(busy);
+        if (busy) {
+            actionsButton.hide();
+        }
     }
 
     private List<ChatMessage> conversationForModel() {
@@ -1504,6 +1514,7 @@ public class ChatController {
     @FXML
     private void newConversation() {
         cancelResponse();
+        clearTransientStatus();
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();
@@ -1549,6 +1560,7 @@ public class ChatController {
             return;
         }
         cancelResponse();
+        clearTransientStatus();
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();
@@ -1719,8 +1731,11 @@ public class ChatController {
                         refreshHistory();
                     });
                 } catch (AiException | java.util.concurrent.CompletionException e) {
-                    Platform.runLater(() -> showSaveStatus(
-                            "Chat title could not be generated. The provisional title is retained.", false));
+                    Platform.runLater(() -> {
+                        if (id.equals(currentConversationId)) {
+                            showSaveStatus("Chat title could not be generated. The provisional title is retained.", false);
+                        }
+                    });
                 }
             });
         } catch (RejectedExecutionException e) {
@@ -1738,6 +1753,9 @@ public class ChatController {
     }
 
     private void showSaveStatus(String message, boolean retry) {
+        if (!retry && retrySaveButton.isVisible()) {
+            return;
+        }
         saveStatus.setText(message);
         saveStatus.setVisible(true);
         saveStatus.setManaged(true);
@@ -1745,6 +1763,16 @@ public class ChatController {
             retrySaveButton.setVisible(true);
             retrySaveButton.setManaged(true);
         }
+    }
+
+    private void clearTransientStatus() {
+        // Unsaved changes can belong to another chat and must remain retryable.
+        if (retrySaveButton.isVisible()) {
+            return;
+        }
+        saveStatus.setText("");
+        saveStatus.setVisible(false);
+        saveStatus.setManaged(false);
     }
 
     @FXML

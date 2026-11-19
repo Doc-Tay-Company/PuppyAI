@@ -15,7 +15,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
-import javafx.scene.control.ComboBox;
+import javafx.scene.control.MenuButton;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.Test;
@@ -76,9 +76,9 @@ class QuizInteractionTest {
                 var request = JSON.readTree(exchange.getRequestBody());
                 String system = request.path("messages").get(0).path("content").asText();
                 String reply;
-                if (request.path("stream").asBoolean()) {
+                if (request.path("stream").asBoolean() && !"json".equals(request.path("format").asText())) {
                     reply = "A streamed reply.";
-                } else if (system.contains("route one user request")) {
+                } else if (system.contains("You are the intent router")) {
                     var routingInput = JSON.readTree(request.path("messages").get(1).path("content").asText());
                     if (routingInput.path("currentMessage").asText().equals("Hello!")) {
                         reply = "{\"intent\":\"CHAT\",\"reply\":\"\",\"topic\":null,\"count\":null,"
@@ -122,7 +122,7 @@ class QuizInteractionTest {
                     assertEquals(1, quizCalls.get());
                     fx(() -> {
                         ui.input().setText("Hello!");
-                        ui.mode().setValue(ChatController.ComposerMode.QUIZ);
+                        ui.actions().getItems().getFirst().fire();
                         ui.send().fire();
                         return null;
                     });
@@ -137,7 +137,7 @@ class QuizInteractionTest {
                         button(card, "Check answer").fire();
                         button(card, "Finish").fire();
                         assertTrue(text(card, "2 / 2"));
-                        ui.mode().setValue(ChatController.ComposerMode.MODEL);
+                        ui.input().setText("/model");
                         ui.send().fire();
                         assertEquals(1, cards(ui).size(), "Normal chat must leave the independent card intact");
                         return null;
@@ -254,7 +254,7 @@ class QuizInteractionTest {
             assertEquals(-1, attempt.selection(0));
         }
 
-        private record Ui(Parent root, ChatController controller, ComboBox<ChatController.ComposerMode> mode,
+        private record Ui(Parent root, ChatController controller, MenuButton actions,
                           TextField input, Button send, VBox messages) { }
 
         private static Ui open(ServiceRegistry services) throws Exception {
@@ -269,15 +269,14 @@ class QuizInteractionTest {
             controller.attachIntentResolution(services.intentResolutionService());
             root.applyCss();
             root.layout();
-            @SuppressWarnings("unchecked")
-            ComboBox<ChatController.ComposerMode> mode = (ComboBox<ChatController.ComposerMode>) loader.getNamespace().get("modeChoice");
-            return new Ui(root, controller, mode, (TextField) loader.getNamespace().get("messageInput"),
+            MenuButton actions = (MenuButton) loader.getNamespace().get("actionsButton");
+            return new Ui(root, controller, actions, (TextField) loader.getNamespace().get("messageInput"),
                     (Button) loader.getNamespace().get("sendButton"), (VBox) loader.getNamespace().get("messagesBox"));
         }
 
         private static void generate(Ui ui) {
             ui.input().setText("Create 2 easy questions about capitals");
-            ui.mode().setValue(ChatController.ComposerMode.QUIZ);
+            ui.actions().getItems().getFirst().fire();
             ui.send().fire();
         }
 
@@ -292,7 +291,10 @@ class QuizInteractionTest {
         }
 
         private static boolean text(Node root, String value) {
-            return root.lookupAll(".label").stream().map(Label.class::cast).anyMatch(label -> value.equals(label.getText()));
+            if (root instanceof Label label && value.equals(label.getText())) return true;
+            if (root instanceof javafx.scene.text.Text text && value.equals(text.getText())) return true;
+            return root instanceof Parent parent && parent.getChildrenUnmodifiable().stream()
+                    .anyMatch(child -> text(child, value));
         }
 
         private static RadioButton option(Node root, String prefix) {

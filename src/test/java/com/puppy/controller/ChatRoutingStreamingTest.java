@@ -83,6 +83,55 @@ class ChatRoutingStreamingTest {
                     });
                 }
 
+                fx(() -> {
+                    ChatController status = fixture();
+                    String error = ChatController.routingFailureMessage(AiException.Reason.PROTOCOL);
+                    invoke(status, "failRouting", 1, get(status, "currentConversationId"), "placeholder", error);
+                    Label banner = (Label) get(status, "saveStatus");
+                    assertTrue(banner.isVisible());
+                    invoke(status, "addMessage", "user", "Original request", List.of());
+                    invoke(status, "newConversation");
+                    assertFalse(banner.isVisible(), "A new chat must not inherit an old routing error");
+                    assertFalse(banner.isManaged());
+                    assertEquals("", banner.getText());
+
+                    invoke(status, "showSaveStatus", error, false);
+                    invoke(status, "selectConversation", 0);
+                    assertFalse(banner.isVisible(), "Selecting a saved chat must clear transient errors");
+                    invoke(status, "showSaveStatus", error, false);
+                    ((javafx.scene.control.TextField) get(status, "messageInput")).setText("/help");
+                    invoke(status, "sendMessage");
+                    assertFalse(banner.isVisible(), "A fresh request must clear the previous request's banner");
+
+                    invoke(status, "showSaveStatus", "Unsaved changes; retry local save.", true);
+                    invoke(status, "showSaveStatus", error, false);
+                    assertEquals("Unsaved changes; retry local save.", banner.getText(),
+                            "A model error must not overwrite an actionable storage warning");
+                    invoke(status, "newConversation");
+                    assertTrue(banner.isVisible());
+                    assertTrue(((javafx.scene.control.Button) get(status, "retrySaveButton")).isVisible());
+                    invoke(status, "selectConversation", 0);
+                    assertTrue(banner.isVisible(), "Unsaved changes must remain visible when navigating");
+                    return null;
+                });
+
+                try (var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                    ChatController title = fx(() -> {
+                        ChatController result = fixture();
+                        set(result, "executor", worker);
+                        invoke(result, "requestTitle", get(result, "currentConversationId"), "Provisional", "Request",
+                                java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Save failed")));
+                        invoke(result, "newConversation");
+                        return result;
+                    });
+                    worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+                    fx(() -> {
+                        assertFalse(((Label) get(title, "saveStatus")).isVisible(),
+                                "Late title failures from the previous chat must not repopulate its banner");
+                        return null;
+                    });
+                }
+
                 ChatController stream = fx(() -> fixture());
                 // Enqueue on the worker/test thread. A following FX barrier observes a flush before completion.
                 invoke(stream, "enqueueToken", 1, "First ");

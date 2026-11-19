@@ -160,9 +160,13 @@ or Focus timer is running. The two timers operate independently, even hidden.
 - Replies stream as Markdown with headings, emphasis, lists, quotes, code,
   links and tables. UI token updates are batched, and completed replies show
   elapsed generation time.
-- The composer offers **Chat / Focus plan / Multiple Quiz / Model / Help**.
-  `/focus`, `/quiz`, `/model` and `/help` provide keyboard alternatives.
-  Model and Help respond locally.
+- The composer has an attachment pin, a **+** actions menu, the message box and
+  Send. **+** opens upward with only **Multiple Quiz** and **Focus mode**; there
+  is no right-side mode dropdown or Model/Help menu item. Select an action for
+  the next message; select it again to return to normal Chat. The input hint
+  shows the selected action, which resets after sending.
+  `/focus`, `/quiz`, `/model` and `/help` remain keyboard commands; the last two
+  respond locally. Model selection is in **More > Settings**.
 - Chat and Multiple Quiz requests pass through model-backed intent resolution.
   An explicit quiz request can create a quiz even in Chat mode; selecting
   Multiple Quiz is a preference, not an instruction to turn every greeting or
@@ -186,6 +190,8 @@ or Focus timer is running. The two timers operate independently, even hidden.
   provisional title and exposes a nonblocking warning.
 - Cancellation, interrupted replies, save failures and provider/routing errors
   are surfaced. Failed saves retain content in memory with **Retry save**.
+  Transient error banners clear on a new request or conversation switch; pending
+  local-save warnings remain visible until retried successfully.
 
 Routing, title generation and feature-specific generation can add model calls
 beyond the final reply. Cloud requests can incur provider charges; local
@@ -248,7 +254,7 @@ without attachments.
 
 ## Focus Planner
 
-Open **Focus** from the menu for manual planning, or select **Focus plan** in
+Open **Focus** from the menu for manual planning, or select **+ > Focus mode** in
 Chat with pinned files and/or a typed description. Both use the same persisted
 planner state.
 
@@ -304,7 +310,7 @@ tasks; imports merge classes/tasks and ignore exact duplicates.
 ## Multiple Quiz
 
 Describe a topic, refer to current-conversation evidence or attach documents,
-then choose **Multiple Quiz** and Send. An explicit creation request in Chat
+then choose **+ > Multiple Quiz** and Send. An explicit creation request in Chat
 can also route here. Example: "Create six questions about fractions: two Easy,
 two Medium and two Hard."
 

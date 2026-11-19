@@ -17,6 +17,29 @@ Database delivery, supplemental chat instructions and interactive Chat quizzes
 are implemented and verified automatically. Live-provider/manual release checks
 remain outstanding as listed below.
 
+### Compact Chat composer (2026-11-19)
+
+- Transient Chat error banners clear on new requests, New chat and history
+  navigation. Delayed title failures are scoped to their conversation. Pending
+  local-save warnings/Retry save stay visible across navigation and cannot be
+  overwritten by unrelated model warnings.
+- The bottom row is attachment pin, **+**, growing message input and Send.
+  The **+** popup opens upward with only **Multiple Quiz** and **Focus mode**.
+  The former right-side mode dropdown and its Model/Help choices are removed.
+- Each action selects the next send behavior, with exclusive checkmarks,
+  accessible text, tooltip and an input hint. Selecting it again returns to
+  ordinary Chat; accepted requests/new conversations reset the selection.
+  Actions are disabled and the popup closes during generation/extraction/quit.
+- Existing Chat/Quiz routing and Focus generation are unchanged. `/model` and
+  `/help` remain local keyboard commands; model switching remains in Settings.
+- Verification: five targeted JavaFX tests passed across composer/layout,
+  routed streaming, Quiz interaction/restart and independent feature windows.
+  Coverage checks the exact action list/order, upward popup, exclusive selection,
+  deselection/reset, busy disabling and retained local commands. The HTTP test
+  fixtures now distinguish Ollama's streamed JSON requests from ordinary chat
+  and recognize the current routing contract; Markdown assertions inspect text
+  nodes as well as labels.
+
 ### Current-time tool and Focus defaults (2026-11-19)
 
 - `CurrentTimeTool` exposes the computer's current zoned timestamp through an
@@ -86,6 +109,10 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 
 ### Database delivery outcome (2026-11-18)
 
+- Build dependency repair (2026-11-19): restored explicit `sqlite-jdbc` 3.51.0.0
+  and `jackson-datatype-jsr310` 2.19.2 dependencies. Focus JSON persistence needs
+  `JavaTimeModule` at compile time; SQLite needs its JDBC driver at runtime.
+  Verified `mvn clean compile` and all 11 database/Focus persistence tests.
 - Focus snapshot compatibility (2026-11-19): loading transactionally removes only
   retired `preferences.planFrom`, `preferences.breakMinutes`,
   `preferences.maxSessionMinutes`, `preferencesConfigured` and `planEdited` fields.

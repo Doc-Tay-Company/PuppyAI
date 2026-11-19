@@ -459,17 +459,25 @@
     -fx-padding: 5 7;
 }
 
-.composer-mode {
-    -fx-background-color: #fffaf5;
-    -fx-background-radius: 10;
-    -fx-border-color: #ead4c4;
-    -fx-border-radius: 10;
-    -fx-font-size: 12px;
+.composer-actions {
+    -fx-font-family: "Segoe UI";
+    -fx-font-size: 18px;
+    -fx-font-weight: normal;
+    -fx-padding: 2 7;
+    -fx-min-width: 28;
 }
 
-.composer-mode .list-cell {
-    -fx-font-size: 12px;
-    -fx-text-fill: #4a2d1d;
+.composer-actions > .label {
+    -fx-padding: 0;
+}
+
+.composer-actions > .arrow-button {
+    -fx-padding: 0;
+}
+
+.composer-actions > .arrow-button > .arrow {
+    -fx-padding: 0;
+    -fx-shape: "";
 }
 
 .history-pane,

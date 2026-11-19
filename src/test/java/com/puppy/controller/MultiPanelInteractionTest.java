@@ -72,14 +72,21 @@ class MultiPanelInteractionTest {
             server.setExecutor(workers);
             server.createContext("/api/chat", exchange -> {
                 var request = json.readTree(exchange.getRequestBody());
-                boolean stream = request.path("stream").asBoolean();
+                boolean stream = request.path("stream").asBoolean()
+                        && !"json".equals(request.path("format").asText());
                 if (stream) {
                     CountDownLatch gate = release.get();
                     entered.get().countDown();
                     try { gate.await(20, TimeUnit.SECONDS); }
                     catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 }
-                String content = stream ? "Background reply completed." : "{\"title\":\"Background practice\"}";
+                String system = request.path("messages").get(0).path("content").asText();
+                String content = stream ? "Background reply completed."
+                        : system.contains("You are the intent router")
+                        ? "{\"intent\":\"CHAT\",\"reply\":\"\",\"topic\":null,\"count\":null,"
+                                + "\"difficulties\":null,\"requiredSourceIds\":[],\"relevantHistoryIndexes\":[],"
+                                + "\"sourceRequired\":false,\"documentRequired\":false,\"allowGeneralKnowledge\":false}"
+                        : "{\"title\":\"Background practice\"}";
                 byte[] bytes = (json.writeValueAsString(Map.of("message", Map.of("content", content), "done", true))
                         + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 try {

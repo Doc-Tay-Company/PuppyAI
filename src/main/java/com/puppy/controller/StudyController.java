@@ -93,7 +93,7 @@ public class StudyController {
         timer.reset();
         completionReaction.stop();
         startPauseButton.setText("Start");
-        phaseLabel.setText("POMODORO CLOCK");
+        phaseLabel.setText("STUDY MODE");
         encouragementLabel.setText("Ready when you are.");
         mascotStateService.resetToIdle();
         studyAnimator.play(MascotState.IDLE);
@@ -112,7 +112,7 @@ public class StudyController {
                     ? "Focus complete. Take a break when ready."
                     : "Break complete. Ready for another focus session?");
         }
-        phaseLabel.setText(timer.getPhase() == StudyTimer.Phase.FOCUS ? "Pomodoro Clock" : "Break time!");
+        phaseLabel.setText(timer.getPhase() == StudyTimer.Phase.FOCUS ? "STUDY MODE" : "BREAK TIME!");
         int seconds = timer.getRemainingSeconds();
         timeLabel.setText("%02d:%02d".formatted(seconds / 60, seconds % 60));
     }
