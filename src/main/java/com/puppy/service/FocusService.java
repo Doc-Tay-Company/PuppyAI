@@ -18,7 +18,7 @@ import com.puppy.repository.FocusRepository;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -46,7 +46,7 @@ public final class FocusService {
     private final FocusPlanExtractor extractor;
     private final DocumentTextExtractor documentTextExtractor;
     private final FocusPlanner planner = new FocusPlanner();
-    private final Clock clock;
+    private final CurrentTimeTool currentTimeTool;
     private final FocusRepository repository;
     private final Map<ClassSlot, String> classIds = new LinkedHashMap<>();
     private final Map<StudyTask, String> taskIds = new LinkedHashMap<>();
@@ -78,7 +78,7 @@ public final class FocusService {
         this.extractor = Objects.requireNonNull(extractor, "extractor");
         this.documentTextExtractor = Objects.requireNonNull(
                 documentTextExtractor, "documentTextExtractor");
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.currentTimeTool = new CurrentTimeTool(clock);
         this.repository = repository;
         this.plan = FocusPlan.empty(today(),
                 "Import your timetable or add tasks, then press Generate plan.");
@@ -347,7 +347,7 @@ public final class FocusService {
         FocusPlan generated = planner.plan(
                 new FocusPlannerInput(classes, tasks),
                 active,
-                LocalDateTime.now(clock));
+                currentTime().toLocalDateTime());
         if (active.planUntil() != null) {
             // A plan end belongs to the request that produced this plan, not to
             // every plan afterwards, so it is consumed here.
@@ -426,8 +426,12 @@ public final class FocusService {
         }
     }
 
+    public ZonedDateTime currentTime() {
+        return currentTimeTool.execute();
+    }
+
     private LocalDate today() {
-        return LocalDate.now(clock);
+        return currentTime().toLocalDate();
     }
 
     private static Comparator<FocusSession> sessionOrder() {

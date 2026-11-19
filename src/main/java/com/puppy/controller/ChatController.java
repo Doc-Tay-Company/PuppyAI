@@ -100,18 +100,6 @@ public class ChatController {
         }
     }
 
-    /**
-     * A focus request waiting for the user's free-time window. The typed
-     * description and the plan end are kept so the plan can start as soon as
-     * the window arrives.
-     */
-    private record PendingFocus(String description, LocalDate planUntil) {
-
-        private PendingFocus withPlanUntil(LocalDate value) {
-            return new PendingFocus(description, value);
-        }
-    }
-
     private static final int MAX_ATTACHMENTS = 5;
     private static final double BUBBLE_MAX_WIDTH = 640;
     private static final Duration STREAM_TICK = Duration.millis(80);
@@ -183,7 +171,6 @@ public class ChatController {
     private volatile int responseGeneration;
     private int attachmentGeneration;
     private Future<?> inFlight;
-    private PendingFocus pendingFocus;
     private FocusPreferences pendingPreferences;
     private ChatHistoryService chatHistory;
     private QuizService quizService;
@@ -291,14 +278,6 @@ public class ChatController {
         messageInput.clear();
         stopMascotReaction();
 
-        if (pendingFocus != null && mode == ComposerMode.CHAT && !message.isEmpty()
-                && !message.startsWith("/")) {
-            answerPendingFocus(message);
-            resetComposerMode();
-            messageInput.requestFocus();
-            return;
-        }
-
         switch (mode) {
             case QUIZ -> {
                 routeRequest(message, IntentResolutionService.Preference.MULTIPLE_QUIZ);
@@ -343,7 +322,6 @@ public class ChatController {
         }
         if (request.isBlank() && attachments.isEmpty()) return;
         final String requestSnapshot = request;
-        pendingFocus = null;
         boolean unavailableHistoryOmitted = currentMessages.stream().anyMatch(item ->
                 item.status() != StoredMessage.Status.COMPLETE || item.entryType().equals("QUIZ"));
         List<Message> priorMessageSnapshot = intentHistoryMessages(currentMessages);
@@ -845,8 +823,8 @@ public class ChatController {
             addMessage("user", input, List.of());
             addMessage("assistant", """
                     Puppy now chooses **Quick** or **Deep** from your description, so there is
-                    no type to force. Tell me how the subject feels and which times you are free,
-                    for example **18:00-21:30**.""", List.of());
+                    no type to force. Tell me how the subject feels. I'll start from now inside
+                    your saved availability, or use a range such as **18:00-21:30** if you give one.""", List.of());
             scrollToBottom();
             mascotStateService.resetToIdle();
             return;
@@ -858,10 +836,9 @@ public class ChatController {
      * Starts a focus request from the pinned files and an optional typed
      * description. Puppy infers Quick or Deep focus from that description.
      *
-     * <p>The planner only runs once a free-time window is known. The window is
-     * parsed from the typed description, never from a pinned timetable, because
-     * class times are not free time. When no range is present, Puppy keeps the
-     * request pending and asks for the window before opening Focus Planner.</p>
+     * <p>An explicit free-time window overrides the saved daily availability.
+     * Otherwise planning starts from now inside the saved window. Timetable
+     * class times are never interpreted as free time.</p>
      *
      * @return {@code true} when the request was accepted
      */
@@ -888,58 +865,10 @@ public class ChatController {
         addMessage("user", typed.isEmpty() ? "Focus plan" : typed, fileNames);
 
         Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(typed);
-        LocalDate planUntil = FocusFormats.parsePlanEnd(typed, LocalDate.now()).orElse(null);
-        if (window.isPresent()) {
-            applyFreeTime(window.get().withPlanUntil(planUntil));
-            return startFocusDocuments(typed);
-        }
-
-        pendingFocus = new PendingFocus(typed, planUntil);
-        addMessage("assistant", freeTimeQuestion(), List.of());
-        scrollToBottom();
-        mascotStateService.resetToIdle();
-        return true;
-    }
-
-    /**
-     * Handles the reply to {@link #freeTimeQuestion()}: parse a range, save it
-     * as the planner's free time, then continue with the pending request.
-     */
-    private void answerPendingFocus(String message) {
-        if (pendingFocus == null) {
-            return;
-        }
-        if (isCancelReply(message)) {
-            pendingFocus = null;
-            addMessage("user", message, List.of());
-            addMessage("assistant",
-                    "Okay, I cancelled that focus plan. Send a new description whenever you're ready.",
-                    List.of());
-            scrollToBottom();
-            mascotStateService.resetToIdle();
-            return;
-        }
-
-        Optional<FocusPreferences> window = FocusFormats.parseFreeTimeWindow(message);
-        Optional<LocalDate> answeredEnd = FocusFormats.parsePlanEnd(message, LocalDate.now());
-        if (window.isEmpty()) {
-            if (answeredEnd.isPresent() && pendingFocus != null) {
-                pendingFocus = pendingFocus.withPlanUntil(answeredEnd.get());
-            }
-            addMessage("user", message, List.of());
-            addMessage("assistant", freeTimeRetry(), List.of());
-            scrollToBottom();
-            mascotStateService.resetToIdle();
-            return;
-        }
-
-        PendingFocus pending = pendingFocus;
-        pendingFocus = null;
-        addMessage("user", message, List.of());
-        LocalDate planUntil = answeredEnd.orElse(pending.planUntil());
-        applyFreeTime(window.get().withPlanUntil(planUntil));
-        startFocusDocuments(pending.description());
-        messageInput.requestFocus();
+        LocalDate planUntil = FocusFormats.parsePlanEnd(typed,
+                focusService.currentTime().toLocalDate()).orElse(null);
+        applyFreeTime(window.orElseGet(focusService::preferences).withPlanUntil(planUntil));
+        return startFocusDocuments(typed);
     }
 
     /** Saves the window and confirms it before the plan is built. */
@@ -958,7 +887,8 @@ public class ChatController {
                     .append(FocusFormats.formatDate(window.planUntil()))
                     .append("**");
         }
-        confirmation.append(".");
+        confirmation.append(". I'll start from the current local time, rounded up to the next "
+                + "five-minute slot, or the next available time if needed.");
         addMessage("assistant", confirmation.toString(), List.of());
     }
 
@@ -1035,29 +965,6 @@ public class ChatController {
         return true;
     }
 
-    private static boolean isCancelReply(String message) {
-        String key = message.toLowerCase(Locale.ROOT).strip();
-        return key.equals("cancel") || key.equals("huy") || key.equals("hủy")
-                || key.equals("huỷ") || key.equals("thoi") || key.equals("thôi")
-                || key.equals("skip") || key.startsWith("khong can")
-                || key.startsWith("không cần");
-    }
-
-    private static String freeTimeQuestion() {
-        return """
-                **When are you free?**
-
-                Tell me a start and end time for your study window, for example
-                **18:00-21:30**, **7h-9h** or **7pm-9pm**. I'll fit the plan inside it and
-                avoid your classes.""";
-    }
-
-    private static String freeTimeRetry() {
-        return """
-                I couldn't find a start and end time. Reply with a window such as
-                **18:00-21:30**, **7h-9h** or **7pm-9pm**, or say **cancel**.""";
-    }
-
     private static String focusHelpText() {
         return """
                 **Focus needs a file or a description**
@@ -1067,7 +974,8 @@ public class ChatController {
 
                 Tell me how the subject feels - important, difficult, or not fully mastered -
                 and I'll book longer Deep focus sessions. Light review and reading stay Quick.
-                If you don't mention a free-time window, I'll ask for one before planning.
+                If you don't mention a free-time window, I'll start from now inside your saved
+                daily availability (08:00-22:00 by default). You can still give a range to override it.
                 Say **in 3 days**, **for 2 weeks** or **deadline 20/11** to set the plan
                 end; otherwise the plan covers one week.
 
@@ -1596,7 +1504,6 @@ public class ChatController {
     @FXML
     private void newConversation() {
         cancelResponse();
-        pendingFocus = null;
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();
@@ -1642,7 +1549,6 @@ public class ChatController {
             return;
         }
         cancelResponse();
-        pendingFocus = null;
         stopMascotReaction();
         if (selectedHistoryIndex < 0) {
             archiveCurrentConversation();

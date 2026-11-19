@@ -52,7 +52,6 @@ public final class FocusPlanner {
     static final int MAX_SESSIONS_PER_SUBJECT_PER_DAY = 2;
     static final int DEFAULT_HORIZON_DAYS = 7;
     static final int MAX_HORIZON_DAYS = 365;
-    static final int START_LEAD_MINUTES = 15;
     private static final DateTimeFormatter DEADLINE_LABEL = DateTimeFormatter.ofPattern("d MMM");
 
     /**
@@ -232,15 +231,18 @@ public final class FocusPlanner {
     /**
      * The free intervals for one date: the availability window, minus classes,
      * then minus time already needed by today. On the current day the window
-     * starts after a short preparation lead.
+     * starts at the current time, rounded up to a five-minute boundary.
      */
     static List<Interval> freeIntervals(LocalDate date, FocusPreferences preferences,
                                         List<ClassSlot> classes, LocalDateTime now) {
         LocalTime start = preferences.earliest();
         LocalTime end = preferences.latest();
         if (date.equals(now.toLocalDate())) {
-            LocalTime earliestStart = ceilToFiveMinutes(
-                    now.toLocalTime().plusMinutes(START_LEAD_MINUTES));
+            LocalDateTime rounded = ceilToFiveMinutes(now);
+            if (!rounded.toLocalDate().equals(date)) {
+                return List.of();
+            }
+            LocalTime earliestStart = rounded.toLocalTime();
             if (earliestStart.isAfter(start)) {
                 start = earliestStart;
             }
@@ -293,22 +295,26 @@ public final class FocusPlanner {
 
     /** Removes the used prefix and the break that follows it. */
     private static void consume(List<Interval> intervals, Interval used, int minutes) {
-        LocalTime newStart = used.start().plusMinutes(minutes + SESSION_GAP_MINUTES);
         int index = intervals.indexOf(used);
         if (index < 0) {
             return;
         }
-        if (!newStart.isBefore(used.end())) {
+        int consumedMinutes = minutes + SESSION_GAP_MINUTES;
+        if (consumedMinutes >= Duration.between(used.start(), used.end()).toMinutes()) {
             intervals.remove(index);
         } else {
-            intervals.set(index, new Interval(newStart, used.end()));
+            intervals.set(index, new Interval(used.start().plusMinutes(consumedMinutes), used.end()));
         }
     }
 
-    private static LocalTime ceilToFiveMinutes(LocalTime time) {
-        int remainder = time.getMinute() % 5;
+    private static LocalDateTime ceilToFiveMinutes(LocalDateTime time) {
+        LocalDateTime minute = time.withSecond(0).withNano(0);
+        if (!minute.equals(time)) {
+            minute = minute.plusMinutes(1);
+        }
+        int remainder = minute.getMinute() % 5;
         int add = remainder == 0 ? 0 : 5 - remainder;
-        return time.plusMinutes(add).withSecond(0).withNano(0);
+        return minute.plusMinutes(add);
     }
 
     private static List<String> buildWarnings(LocalDate today, List<Chunk> missed,

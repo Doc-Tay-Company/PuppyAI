@@ -125,6 +125,48 @@ class ChatRoutingStreamingTest {
                         return null;
                     });
                 }
+                try (var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                    var clock = java.time.Clock.fixed(java.time.Instant.parse("2026-11-19T05:21:01Z"),
+                            java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
+                    var today = java.time.LocalDate.of(2026, 11, 19);
+                    var focus = new com.puppy.service.FocusService(documents ->
+                            new com.puppy.model.FocusExtraction(new com.puppy.model.FocusPlannerInput(List.of(),
+                                    List.of(new com.puppy.model.StudyTask("Math", "Review",
+                                            com.puppy.enums.FocusType.QUICK, 25, today,
+                                            com.puppy.enums.Priority.MEDIUM))), List.of()),
+                            new com.puppy.document.DocumentTextExtractor(), clock);
+                    focus.setPreferences(new com.puppy.model.FocusPreferences(
+                            java.time.LocalTime.of(10, 0), java.time.LocalTime.of(21, 0)));
+                    ChatController defaultNow = fx(() -> {
+                        ChatController result = fixture();
+                        set(result, "responding", false);
+                        set(result, "focusService", focus);
+                        set(result, "executor", worker);
+                        set(result, "focusOpenAction", (Runnable) () -> { });
+                        invoke(result, "startFocus", "Math is important today");
+                        assertTrue((boolean) get(result, "responding"));
+                        assertFalse(visibleText(result).contains("When are you free"));
+                        return result;
+                    });
+                    worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+                    fx(() -> {
+                        assertFalse((boolean) get(defaultNow, "responding"));
+                        assertEquals(java.time.LocalTime.of(12, 25),
+                                focus.currentPlan().sessions().getFirst().start());
+                        assertEquals(java.time.LocalTime.of(10, 0), focus.preferences().earliest(),
+                                "The default must preserve saved availability for future days");
+                        invoke(defaultNow, "startFocus", "Math today 18:00-21:00");
+                        return null;
+                    });
+                    worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+                    fx(() -> {
+                        assertFalse((boolean) get(defaultNow, "responding"));
+                        assertEquals(java.time.LocalTime.of(18, 0),
+                                focus.currentPlan().sessions().getFirst().start());
+                        assertEquals(java.time.LocalTime.of(18, 0), focus.preferences().earliest());
+                        return null;
+                    });
+                }
                 System.out.println("PASS: clarification, technical failures, progressive chunks, partial and stale guards");
             } finally {
                 Platform.exit();

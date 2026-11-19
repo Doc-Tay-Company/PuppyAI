@@ -36,6 +36,27 @@ class FocusServiceTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 11, 16);
 
     @Test
+    void refreshesStartingTimeAfterSlowFocusExtraction() throws Exception {
+        var instant = new AtomicReference<>(Instant.parse("2026-11-16T12:21:00Z"));
+        Clock clock = new Clock() {
+            @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return Clock.fixed(instant(), zone); }
+            @Override public Instant instant() { return instant.get(); }
+        };
+        FocusService service = new FocusService(documents -> {
+            instant.set(Instant.parse("2026-11-16T12:31:01Z"));
+            return extraction(List.of(), List.of(task("Math", "Review", FocusType.QUICK, 25, TODAY)));
+        }, new DocumentTextExtractor(), clock);
+
+        FocusPlan plan = service.importDocuments(List.of(attachment("math.txt")));
+
+        assertEquals(time(12, 35), plan.sessions().getFirst().start(),
+                "Generation must not reuse the time from before extraction started");
+        assertEquals(FocusPreferences.defaults(), service.preferences(),
+                "Today's current time must not become the daily availability for later days");
+    }
+
+    @Test
     void mergesImportedClassesAndTasksWithoutDuplicates() throws Exception {
         AtomicReference<FocusExtraction> reply = new AtomicReference<>();
         FocusService service = service(documents -> reply.get());

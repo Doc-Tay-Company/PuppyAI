@@ -96,13 +96,18 @@ class ChatServiceTest {
                     AppConfig.DEFAULT_OLLAMA_MODEL, "test-only-openrouter-key-1234567890", url);
             var models = new ModelService(config, new AiSettingsStore(tempDirectory));
             var preferences = new java.util.concurrent.atomic.AtomicReference<>("First saved preference");
-            var service = new ChatService(models, new DocumentTextExtractor(), preferences::get);
+            var service = new ChatService(models, new DocumentTextExtractor(), preferences::get,
+                    new CurrentTimeTool(java.time.Clock.fixed(
+                            java.time.Instant.parse("2026-11-19T05:21:00Z"),
+                            java.time.ZoneId.of("Asia/Ho_Chi_Minh"))));
             var conversation = java.util.List.of(com.puppy.model.ChatMessage.user("Explain this."));
             var prepared = service.prepareReply(conversation, java.util.List.of());
             preferences.set("Updated saved preference");
             models.selectModel(com.puppy.ai.AiModels.localModelId(AppConfig.DEFAULT_OLLAMA_MODEL));
             assertEquals("Hello", service.reply(prepared, token -> { }));
-            assertTrue(requests.get(0).path("messages").get(1).path("content").asText().contains("First saved preference"));
+            assertTrue(requests.get(0).path("messages").get(2).path("content").asText().contains("First saved preference"));
+            assertTrue(requests.get(0).path("messages").get(0).path("content").asText()
+                    .contains("2026-11-19T12:21:00+07:00"));
             assertFalse(requests.get(0).toString().contains("Updated saved preference"));
 
             service.reply(conversation, java.util.List.of(), token -> { });
@@ -114,7 +119,91 @@ class ChatServiceTest {
             preferences.set("");
             service.reply(conversation, java.util.List.of(), token -> { });
             assertEquals(ChatPromptBuilder.SYSTEM_PROMPT,
-                    requests.get(3).path("messages").get(0).path("content").asText());
+                    requests.get(3).path("messages").get(1).path("content").asText());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void samplesCurrentTimeWhenReplyExecutesRatherThanWhenPrepared() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new java.util.concurrent.CopyOnWriteArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        server.createContext("/api/chat", exchange -> {
+            requests.add(json.readTree(exchange.getRequestBody()));
+            byte[] bytes = "{\"message\":{\"content\":\"12:21 PM (UTC+07:00)\"},\"done\":true}\n"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            var instant = new java.util.concurrent.atomic.AtomicReference<>(
+                    java.time.Instant.parse("2026-11-19T05:20:00Z"));
+            var clock = new java.time.Clock() {
+                @Override public java.time.ZoneId getZone() { return java.time.ZoneId.of("Asia/Ho_Chi_Minh"); }
+                @Override public java.time.Clock withZone(java.time.ZoneId zone) {
+                    return java.time.Clock.fixed(instant(), zone);
+                }
+                @Override public java.time.Instant instant() { return instant.get(); }
+            };
+            AppConfig config = new AppConfig("Puppy", "test", true, tempDirectory,
+                    "http://127.0.0.1:" + server.getAddress().getPort(), AppConfig.DEFAULT_OLLAMA_MODEL,
+                    null, AppConfig.DEFAULT_OPENROUTER_BASE_URL);
+            var service = new ChatService(new ModelService(config, new AiSettingsStore(tempDirectory)),
+                    new DocumentTextExtractor(), () -> "", new CurrentTimeTool(clock));
+            var prepared = service.prepareReply(java.util.List.of(
+                    com.puppy.model.ChatMessage.assistant("It was 9 AM earlier."),
+                    com.puppy.model.ChatMessage.user("What time is it now? Use 12-hour time.")),
+                    java.util.List.of());
+            assertFalse(prepared.messages().stream().anyMatch(message ->
+                    message.content().startsWith("Application tool result: get_current_time")));
+            instant.set(java.time.Instant.parse("2026-11-19T05:21:00Z"));
+            var streamed = new StringBuilder();
+            assertEquals("12:21 PM (UTC+07:00)", service.reply(prepared, streamed::append));
+            assertEquals("12:21 PM (UTC+07:00)", streamed.toString());
+            String first = requests.getFirst().path("messages").get(0).path("content").asText();
+            assertTrue(first.contains("2026-11-19T12:21:00+07:00"));
+            assertTrue(first.contains("Asia/Ho_Chi_Minh"));
+            instant.set(java.time.Instant.parse("2026-11-19T17:01:00Z"));
+            service.reply(prepared, token -> { });
+            String second = requests.get(1).path("messages").get(0).path("content").asText();
+            assertTrue(second.contains("2026-11-20T00:01:00+07:00"));
+            assertTrue(second.contains("Friday"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void focusExtractionReceivesLocalTimeTimezoneAndCorrectDateAcrossUtcMidnight() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var request = new java.util.concurrent.atomic.AtomicReference<com.fasterxml.jackson.databind.JsonNode>();
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        server.createContext("/api/chat", exchange -> {
+            request.set(json.readTree(exchange.getRequestBody()));
+            byte[] bytes = json.writeValueAsBytes(java.util.Map.of("message", java.util.Map.of("content",
+                    "{\"classes\":[],\"tasks\":[],\"subjects\":[\"Math\"]}")));
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            AppConfig config = new AppConfig("Puppy", "test", true, tempDirectory,
+                    "http://127.0.0.1:" + server.getAddress().getPort(), AppConfig.DEFAULT_OLLAMA_MODEL,
+                    null, AppConfig.DEFAULT_OPENROUTER_BASE_URL);
+            var extractor = new AiFocusPlanExtractor(new ModelService(config, new AiSettingsStore(tempDirectory)),
+                    java.time.Clock.fixed(java.time.Instant.parse("2026-11-19T17:01:00Z"),
+                            java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+            extractor.extract(java.util.List.of(new DocumentAttachment(Path.of("request.txt"),
+                    "Review Math today", 0, false)));
+            String prompt = request.get().path("messages").get(1).path("content").asText();
+            assertTrue(prompt.contains("2026-11-20T00:01:00+07:00"));
+            assertTrue(prompt.contains("Friday"));
+            assertTrue(prompt.contains("Asia/Ho_Chi_Minh"));
+            assertTrue(request.get().path("messages").get(0).path("content").asText()
+                    .contains("get_current_time"));
         } finally {
             server.stop(0);
         }

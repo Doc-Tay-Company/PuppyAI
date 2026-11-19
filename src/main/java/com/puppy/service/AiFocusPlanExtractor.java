@@ -7,10 +7,7 @@ import com.puppy.model.FocusExtraction;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.TextStyle;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -25,7 +22,6 @@ import java.util.Objects;
 public final class AiFocusPlanExtractor implements FocusPlanExtractor {
 
     static final int MAX_DOCUMENT_CHARS = 24_000;
-    private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private static final String SYSTEM_PROMPT = """
             You are Puppy's focus planner. Read the attached timetable, subject list, assignment
@@ -48,7 +44,8 @@ public final class AiFocusPlanExtractor implements FocusPlanExtractor {
             - "day" is an English weekday name: MONDAY ... SUNDAY.
             - Times use 24-hour HH:mm.
             - "deadline" is ISO yyyy-MM-dd.
-            - Resolve relative dates such as "next Friday" against the date supplied below.
+            - Resolve relative dates/times such as "next Friday" and "in two hours" against the
+              supplied get_current_time result. Its timezone defines local dates and times.
             - "type" is DEEP when the description says the subject is important, needs more
               time, is difficult, or the user is not confident / has not mastered it. DEEP
               also covers programming, assignments, projects, research and exam preparation.
@@ -67,15 +64,19 @@ public final class AiFocusPlanExtractor implements FocusPlanExtractor {
             """.strip();
 
     private final ModelService modelService;
-    private final Clock clock;
+    private final CurrentTimeTool currentTimeTool;
 
     public AiFocusPlanExtractor(ModelService modelService) {
         this(modelService, Clock.systemDefaultZone());
     }
 
     public AiFocusPlanExtractor(ModelService modelService, Clock clock) {
+        this(modelService, new CurrentTimeTool(clock));
+    }
+
+    public AiFocusPlanExtractor(ModelService modelService, CurrentTimeTool currentTimeTool) {
         this.modelService = Objects.requireNonNull(modelService, "modelService");
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.currentTimeTool = Objects.requireNonNull(currentTimeTool, "currentTimeTool");
     }
 
     @Override
@@ -84,10 +85,9 @@ public final class AiFocusPlanExtractor implements FocusPlanExtractor {
             throw new FocusPlanningException(
                     "Attach your timetable or subject file first, then try again.");
         }
-        LocalDate today = LocalDate.now(clock);
-        String dateContext = "Today is %s (%s).%n".formatted(
-                ISO.format(today),
-                today.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+        var now = currentTimeTool.execute();
+        LocalDate today = now.toLocalDate();
+        String dateContext = CurrentTimeTool.context(now);
 
         String prompt = dateContext + """
 

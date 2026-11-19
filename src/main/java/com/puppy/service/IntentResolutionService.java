@@ -35,6 +35,9 @@ public final class IntentResolutionService {
 
             INTENT CLASSIFICATION RULES
             - CHAT: greetings, ordinary conversation, and a question ABOUT quiz capabilities.
+            - Current-time/date questions are CHAT: that pipeline invokes the application's
+              get_current_time tool before answering. They need no document or history evidence;
+              do not return CONTEXT_UNAVAILABLE just because a timestamp is not supplied here.
             - GENERATE_QUIZ: an explicit request TO CREATE quiz questions, including an interactive quiz,
               when the required evidence is available. Never substitute ordinary Chat text questions.
             - CLARIFY: intent, scope, or source references are ambiguous; ask a concise targeted question.

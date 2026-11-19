@@ -13,7 +13,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo 3. Launching Puppy AI...
+echo 2. Launching Puppy AI...
 call mvn javafx:run
 
 pause

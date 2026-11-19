@@ -22,9 +22,10 @@ Puppy offers **Focus plan / Multiple Quiz / Model / Help** next to the message b
 pinned PDF, Word and text files into the conversation. Settings switches models
 live and stores the OpenRouter key only on this computer. Focus planning reads a
 pinned timetable or subject file, or a typed subject description, infers Quick
-or Deep focus from how you describe the subject, asks for your free-time window
-when it is missing, and builds a constraint-aware study plan while the Focus
-Planner panel supports hand-made classes, tasks and sessions. Chat, focus data
+or Deep focus from how you describe the subject, starts from the current local
+time inside your saved availability when no window is given, and builds a
+constraint-aware study plan while the Focus Planner panel supports hand-made
+classes, tasks and sessions. Chat, focus data
 and extracted attachments persist locally; cloud models need an internet connection and an
 OpenRouter key.
 
@@ -113,6 +114,20 @@ and include examples", then choose **Save instructions**.
 
 The Settings header remains fixed while its body scrolls, including when the
 cloud API-key section is open.
+
+## Current time
+
+Puppy has a read-only `get_current_time` application tool backed by this computer's
+clock and timezone. The app invokes it immediately before each chat reply and
+Focus extraction, so both local and cloud models receive a fresh timestamp,
+weekday, timezone and UTC offset. It needs no extra API or internet time service;
+chat still uses the selected model and its usual connection requirements.
+
+Ask "What time is it?" or "Tell me the current time in 12-hour format." The model
+formats the supplied result in the conversation language (24-hour time with the
+timezone by default). This is application-dispatched context, not a general
+model-controlled tool loop. An incorrect computer clock produces an incorrect
+reported time. Old timestamps are never reused as the current time.
 
 ## Multiple Quiz
 
@@ -432,9 +447,10 @@ in chat is immediately visible in the panel.
 2. The selected model reads that text and returns strict JSON classes, tasks
    and subjects. OpenRouter and Ollama share the same prompt; only the transport
    changes. The model only extracts facts; it does not choose study times.
-3. If the typed description has no free-time window, Puppy asks for one before
-   planning. Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or
-   `7pm-9pm` are accepted; the answer becomes the Focus free-time setting.
+3. Planning starts from the current local time inside the saved daily availability
+   (`08:00-22:00` by default), rounded up to a five-minute boundary. No free-time
+   follow-up is required. Ranges such as `18:00-21:30`, `7h-9h`, `7h tối - 9h tối` or
+   `7pm-9pm` override and become the Focus free-time setting.
    Timetable class times are never mistaken for free time.
 4. The plan covers one week by default. Say `trong 3 ngày`, `for 2 weeks`,
    `1 tháng` or give an appointment such as `deadline 20/11` to choose another
@@ -465,8 +481,9 @@ it is not shown or chosen in the UI.
 - Stays inside the free-time window (default `08:00 - 22:00`, adjustable).
 - Finishes work on or before its deadline; work whose deadline has passed is
   reported instead of being scheduled late.
-- Leaves a 10-minute gap between sessions and starts today at least 15 minutes
-  from the current time.
+- Leaves a 10-minute gap between sessions and starts today no earlier than the
+  current time, rounded up to a five-minute boundary. If today's window is over
+  or too short, uses the next available day within the plan horizon and deadlines.
 - Gives each subject at most two sessions per day and round-robins subjects, so
   one subject cannot consume the whole plan.
 - Uses a one-week horizon by default. A stated duration (`3 ngày`, `2 tuần`,
@@ -527,9 +544,9 @@ windows. Chat, Study, Focus and Settings views are cached between openings.
   clipboard text into the message box.
 - **Commands and focus** use the option beside the message box instead of typing
   slash commands. **Focus plan** reads pinned files or the typed description,
-  infers Quick or Deep focus from it, and asks for a free-time window when the
-  description has none. **Model** shows the exact model, provider and whether it
-  is cloud or local, and **Help** lists the options. Model and Help answer
+  infers Quick or Deep focus from it, and starts from now inside saved availability
+  when the description has no time window. **Model** shows the exact model,
+  provider and whether it is cloud or local, and **Help** lists the options. Model and Help answer
   locally.
 - **Sessions** support a highlighted active conversation, a scrollable history,
   smooth switching and automatic archiving of the conversation you leave. The

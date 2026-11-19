@@ -31,6 +31,43 @@ class FocusPlannerTest {
     private final FocusPlanner planner = new FocusPlanner();
 
     @Test
+    void startsFromNowRoundedUpWithoutTheFormerPreparationDelay() {
+        FocusPlannerInput input = new FocusPlannerInput(List.of(),
+                List.of(task("Math", "Review", FocusType.QUICK, 25, TODAY, Priority.MEDIUM)));
+        for (LocalTime now : List.of(time(12, 21), time(12, 25).plusSeconds(1),
+                time(12, 25).plusNanos(1), time(12, 25))) {
+            FocusPlan plan = planner.plan(input, FocusPreferences.defaults(), TODAY.atTime(now));
+            LocalTime expected = now.equals(time(12, 25)) ? time(12, 25)
+                    : now.isBefore(time(12, 25)) ? time(12, 25) : time(12, 30);
+            assertEquals(expected, plan.sessions().getFirst().start());
+            assertFalse(plan.sessions().getFirst().start().isBefore(now));
+        }
+        FocusPlan laterWindow = planner.plan(input, preferences(18, 0, 21, 0), TODAY.atTime(12, 21));
+        assertEquals(time(18, 0), laterWindow.sessions().getFirst().start());
+    }
+
+    @Test
+    void roundingAcrossMidnightNeverCreatesEarlierSessionsToday() {
+        FocusPlannerInput input = new FocusPlannerInput(List.of(),
+                List.of(task("Math", "Review", FocusType.QUICK, 25, TODAY.plusDays(1), Priority.MEDIUM)));
+        FocusPlan plan = planner.plan(input, preferences(0, 0, 23, 59), TODAY.atTime(23, 59, 59));
+        assertEquals(TODAY.plusDays(1), plan.sessions().getFirst().date());
+        assertEquals(time(0, 0), plan.sessions().getFirst().start());
+        assertTrue(plan.sessions().stream().noneMatch(session -> session.date().equals(TODAY)));
+    }
+
+    @Test
+    void breakCrossingMidnightCannotReopenEarlierTimeSlots() {
+        FocusPlannerInput input = new FocusPlannerInput(List.of(), List.of(
+                task("Math", "Review", FocusType.QUICK, 50, TODAY.plusDays(1), Priority.MEDIUM)));
+        FocusPlan plan = planner.plan(input, preferences(0, 0, 23, 59), TODAY.atTime(23, 30));
+        assertEquals(2, plan.sessions().size());
+        assertEquals(TODAY, plan.sessions().getFirst().date());
+        assertEquals(time(23, 30), plan.sessions().getFirst().start());
+        assertEquals(TODAY.plusDays(1), plan.sessions().get(1).date());
+    }
+
+    @Test
     void neverPlacesASessionOverAClass() {
         FocusPlannerInput input = new FocusPlannerInput(
                 List.of(new ClassSlot("Math", DayOfWeek.MONDAY,

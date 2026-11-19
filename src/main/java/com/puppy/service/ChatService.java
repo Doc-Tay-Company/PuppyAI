@@ -7,6 +7,8 @@ import com.puppy.model.ChatMessage;
 import com.puppy.model.DocumentAttachment;
 
 import java.nio.file.Path;
+import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -25,6 +27,7 @@ public final class ChatService {
     private final ModelService modelService;
     private final DocumentTextExtractor documentTextExtractor;
     private final java.util.function.Supplier<String> additionalInstructions;
+    private final CurrentTimeTool currentTimeTool;
 
     public ChatService(ModelService modelService, DocumentTextExtractor documentTextExtractor) {
         this(modelService, documentTextExtractor, () -> "");
@@ -32,9 +35,17 @@ public final class ChatService {
 
     public ChatService(ModelService modelService, DocumentTextExtractor documentTextExtractor,
                        java.util.function.Supplier<String> additionalInstructions) {
+        this(modelService, documentTextExtractor, additionalInstructions,
+                new CurrentTimeTool(Clock.systemDefaultZone()));
+    }
+
+    public ChatService(ModelService modelService, DocumentTextExtractor documentTextExtractor,
+                       java.util.function.Supplier<String> additionalInstructions,
+                       CurrentTimeTool currentTimeTool) {
         this.modelService = Objects.requireNonNull(modelService, "modelService");
         this.documentTextExtractor = Objects.requireNonNull(documentTextExtractor, "documentTextExtractor");
         this.additionalInstructions = Objects.requireNonNull(additionalInstructions, "additionalInstructions");
+        this.currentTimeTool = Objects.requireNonNull(currentTimeTool, "currentTimeTool");
     }
 
     public record Request(List<ChatMessage> messages) {
@@ -65,7 +76,9 @@ public final class ChatService {
 
     public String reply(Request request, Consumer<String> onToken) throws AiException {
         Objects.requireNonNull(onToken, "onToken");
-        return modelService.streamChat(request.messages(), onToken);
+        List<ChatMessage> messages = new ArrayList<>(request.messages());
+        messages.add(0, ChatMessage.system(CurrentTimeTool.context(currentTimeTool.execute())));
+        return modelService.streamChat(messages, onToken);
     }
 
     /** Streams a reply using the recent conversation and any attached documents. */

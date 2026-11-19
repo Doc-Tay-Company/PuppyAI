@@ -81,7 +81,7 @@ public class StudyController {
             completionReaction.stop();
             timer.start();
             startPauseButton.setText("Pause");
-            encouragementLabel.setText("You have got this!");
+            encouragementLabel.setText("You've got this!");
             mascotStateService.setState(MascotState.STUDYING);
             studyAnimator.play(MascotState.STUDYING);
         }
@@ -93,7 +93,7 @@ public class StudyController {
         timer.reset();
         completionReaction.stop();
         startPauseButton.setText("Start");
-        phaseLabel.setText("FOCUS TIME");
+        phaseLabel.setText("POMODORO CLOCK");
         encouragementLabel.setText("Ready when you are.");
         mascotStateService.resetToIdle();
         studyAnimator.play(MascotState.IDLE);
@@ -112,7 +112,7 @@ public class StudyController {
                     ? "Focus complete. Take a break when ready."
                     : "Break complete. Ready for another focus session?");
         }
-        phaseLabel.setText(timer.getPhase() == StudyTimer.Phase.FOCUS ? "FOCUS TIME" : "BREAK TIME");
+        phaseLabel.setText(timer.getPhase() == StudyTimer.Phase.FOCUS ? "Pomodoro Clock" : "Break time!");
         int seconds = timer.getRemainingSeconds();
         timeLabel.setText("%02d:%02d".formatted(seconds / 60, seconds % 60));
     }

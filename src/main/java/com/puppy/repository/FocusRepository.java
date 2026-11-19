@@ -1,10 +1,12 @@
 package com.puppy.repository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.puppy.database.Database;
 import com.puppy.model.FocusState;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -18,14 +20,37 @@ public class FocusRepository {
     }
 
     public Optional<FocusState> load() {
-        return database.call(connection -> {
+        return database.transaction(connection -> {
+            String payload;
             try (var statement = connection.prepareStatement(
                     "SELECT payload FROM focus_state WHERE singleton = 1");
                  var rows = statement.executeQuery()) {
-                return rows.next()
-                        ? Optional.of(mapper.readValue(rows.getString(1), FocusState.class))
-                        : Optional.empty();
+                if (!rows.next()) {
+                    return Optional.empty();
+                }
+                payload = rows.getString(1);
             }
+            var snapshot = mapper.readTree(payload);
+            boolean migrated = false;
+            if (snapshot instanceof ObjectNode root) {
+                // Retired planner controls have no counterpart in the current model.
+                migrated = root.remove("preferencesConfigured") != null;
+                migrated |= root.remove("planEdited") != null;
+                if (root.get("preferences") instanceof ObjectNode preferences) {
+                    for (String field : List.of("planFrom", "breakMinutes", "maxSessionMinutes")) {
+                        migrated |= preferences.remove(field) != null;
+                    }
+                }
+            }
+            FocusState state = mapper.treeToValue(snapshot, FocusState.class);
+            if (migrated) {
+                try (var statement = connection.prepareStatement(
+                        "UPDATE focus_state SET payload = ? WHERE singleton = 1")) {
+                    statement.setString(1, mapper.writeValueAsString(snapshot));
+                    statement.executeUpdate();
+                }
+            }
+            return Optional.of(state);
         });
     }
 

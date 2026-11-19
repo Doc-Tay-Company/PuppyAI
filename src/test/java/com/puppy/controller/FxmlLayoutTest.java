@@ -287,10 +287,12 @@ class FxmlLayoutTest {
                 messageInput.setText("Math is important and I need more time");
                 modeChoice.setValue(ChatController.ComposerMode.FOCUS);
                 ((Button) chatStage.getScene().lookup("#sendButton")).fire();
-                assertEquals(afterModel + 2, messages.getChildren().size(),
-                        "Focus without a time window should ask when the user is free");
+                assertEquals(afterModel + 1, messages.getChildren().size(),
+                        "Focus without a time window should start planning instead of asking for availability");
+                assertTrue(chatStage.getScene().lookup("#thinkingLabel").isVisible(),
+                        "The default-now request should start background Focus extraction");
                 assertEquals(ChatController.ComposerMode.CHAT, modeChoice.getValue(),
-                        "Asking for free time should return the composer to Chat");
+                        "Starting a Focus plan should return the composer to Chat");
                 List<Button> messageActions = messages.lookupAll(".message-action").stream()
                         .filter(Button.class::isInstance)
                         .map(Button.class::cast)

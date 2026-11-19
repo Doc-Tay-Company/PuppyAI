@@ -17,6 +17,32 @@ Database delivery, supplemental chat instructions and interactive Chat quizzes
 are implemented and verified automatically. Live-provider/manual release checks
 remain outstanding as listed below.
 
+### Current-time tool and Focus defaults (2026-11-19)
+
+- `CurrentTimeTool` exposes the computer's current zoned timestamp through an
+  injectable Java `Clock`. Chat invokes `get_current_time` at reply execution,
+  after any routing/save wait, and supplies fresh trusted context to the selected
+  model. Focus extraction receives the same timestamp/date/timezone format.
+  The app dispatches this one read-only tool automatically; native provider tool
+  calls and a general autonomous tool loop are not introduced.
+- Time answers use the model for language and requested 12/24-hour formatting,
+  with 24-hour time and timezone as the default. The tool needs no network or
+  new dependency, but ordinary model connection requirements still apply.
+- Chat Focus requests without a range no longer ask for availability. They use
+  the saved daily window (08:00-22:00 by default); an explicit range overrides it.
+  Both entry points schedule from now, rounded up to a five-minute boundary,
+  rather than adding the former 15-minute preparation delay. Saved availability
+  remains a daily constraint and is not replaced with today's wall-clock hour.
+- Planning samples time again after extraction, respects classes/deadlines and
+  moves to the next available day if today's window is exhausted. Rounding and
+  post-session breaks cannot wrap around midnight into earlier slots today.
+- Verification: 64 targeted tests passed across Chat prompts/services, intent
+  routing, Focus scheduling/services/persistence and JavaFX controller/layout
+  integration. Local HTTP stubs verify time context reaches both providers and
+  Focus extraction; fixed/advancing clocks cover timezone/date rollover, queued
+  replies, slow extraction, exact five-minute boundaries and midnight breaks.
+  Live-provider answer wording was not evaluated.
+
 ### Database delivery plan (approved 2026-11-18)
 
 This delivery implements DB-1 through DB-4 and the definition-storage portion of
@@ -60,6 +86,20 @@ actual results and a concrete remaining-feature plan. No separate plan file.
 
 ### Database delivery outcome (2026-11-18)
 
+- Focus snapshot compatibility (2026-11-19): loading transactionally removes only
+  retired `preferences.planFrom`, `preferences.breakMinutes`,
+  `preferences.maxSessionMinutes`, `preferencesConfigured` and `planEdited` fields.
+  These controls are not supported by the current planner. Current preferences,
+  tasks, classes, session IDs/completion and plan metadata remain unchanged.
+  The complete converted snapshot must deserialize before it is saved; unknown
+  fields still fail explicitly, and failed conversions/writes preserve the
+  original payload. No SQLite schema-version change or database reset is needed.
+  Verification: all 11 Focus persistence/database tests passed, including
+  migration/restart, unknown-field rejection and failed-write rollback/retry.
+  The affected local database was backed up and integrity-checked before
+  migration; application service initialization passed afterward, with settings,
+  conversations, messages, attachments and quiz tables verified unchanged.
+  The JavaFX window was not launched as part of this verification.
 - DB-1 through DB-4 are implemented, including worker-safe Focus/settings
   mutations, history restoration, failed-save retry and startup/quit handling.
   API keys remain in `ai-secrets.properties`; no `.env` was added.
@@ -662,7 +702,8 @@ progress or scores is intentionally excluded, not a missing persistence task.
   **Chat**, **Focus plan**, **Model** and **Help**. Model and Help answer
   locally. The 📌 button attaches documents, and the new-chat greeting ends at
   “Ask me anything.” Focus has no Quick/Deep selector; Puppy infers the type
-  from the description and asks for a free-time window when one is missing.
+  from the description and defaults to now inside saved daily availability when
+  no free-time window is supplied.
 - **Tests:** `MascotMessagesTest`, Markdown rendering and composer-option
   assertions in `FxmlLayoutTest`, the updated greeting contract in
   `ChatServiceTest`, and `DurationFormatsTest` for reply timing.
@@ -680,8 +721,8 @@ progress or scores is intentionally excluded, not a missing persistence task.
   and round-robins subjects for fairness. The horizon defaults to one week, uses
   the latest task deadline when it is later, and honors an explicit plan end
   such as `trong 3 ngày`, `2 tuần`, `1 tháng`, `deadline 20/11` or `trước
-  2026-12-01`; the horizon is capped at 365 days. Today's first session starts at
-  least 15 minutes after the current time.
+  2026-12-01`; the horizon is capped at 365 days. Today's first session starts no
+  earlier than now, rounded up to a five-minute boundary.
 - **Block sizing:** long tasks are split into equal blocks rather than one full
   block plus a remainder; a 120-minute deep task becomes 3 × 40 minutes.
 - **Tolerant parsing:** `FocusFormats` reads `18:00`, `6h30`, `6h30 chieu`,
@@ -714,9 +755,9 @@ progress or scores is intentionally excluded, not a missing persistence task.
 - **Chat focus option:** **Focus plan** accepts pinned files or a typed subject
   description, infers Quick/Deep from the description, runs extraction on the
   shared worker pool, replies with a Markdown plan summary and opens Focus
-  Planner. When the description has no free-time window, Puppy stores the request
-  and any requested plan end, asks “When are you free?”, parses the reply into
-  `FocusPreferences`, and then builds the plan. A duration or deadline in the
+  Planner. When the description has no free-time window, Puppy starts from now
+  inside the saved `FocusPreferences` window without a follow-up question.
+  An explicit range still overrides that window. A duration or deadline in the
   request sets the plan end; otherwise the planner uses one week. Timetable class
   times are not treated as free time. Slash commands remain a keyboard fallback,
   and the composer placeholder is “Ask me anything”.

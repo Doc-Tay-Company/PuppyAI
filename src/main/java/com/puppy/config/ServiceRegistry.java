@@ -10,6 +10,7 @@ import com.puppy.service.AiFocusPlanExtractor;
 import com.puppy.service.AppSettingsService;
 import com.puppy.service.ChatHistoryService;
 import com.puppy.service.ChatService;
+import com.puppy.service.CurrentTimeTool;
 import com.puppy.service.DefaultMascotStateService;
 import com.puppy.service.FocusService;
 import com.puppy.service.IntentResolutionService;
@@ -61,11 +62,14 @@ public final class ServiceRegistry implements AutoCloseable {
             this.quizzes = new QuizRepository(database);
             this.quizService = new QuizService(modelService);
             this.intentResolutionService = new IntentResolutionService(modelService);
+            Clock clock = Clock.systemDefaultZone();
+            CurrentTimeTool currentTimeTool = new CurrentTimeTool(clock);
             DocumentTextExtractor documentTextExtractor = new DocumentTextExtractor();
-            this.chatService = new ChatService(modelService, documentTextExtractor, appSettings::additionalInstructions);
+            this.chatService = new ChatService(modelService, documentTextExtractor,
+                    appSettings::additionalInstructions, currentTimeTool);
             this.focusService = new FocusService(
-                    new AiFocusPlanExtractor(modelService, Clock.systemDefaultZone()),
-                    documentTextExtractor, new FocusRepository(database));
+                    new AiFocusPlanExtractor(modelService, currentTimeTool),
+                    documentTextExtractor, clock, new FocusRepository(database));
         } catch (RuntimeException e) {
             database.close();
             threadManager.close();

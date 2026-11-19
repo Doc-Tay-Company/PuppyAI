@@ -1,5 +1,8 @@
 package com.puppy.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.puppy.database.Database;
 import com.puppy.database.PersistenceException;
 import com.puppy.document.DocumentTextExtractor;
@@ -60,6 +63,109 @@ class FocusPersistenceTest {
                 Files.deleteIfExists(path);
             }
         }
+    }
+
+    @Test
+    void migratesRetiredPlannerFieldsWithoutChangingSavedPlanAndSurvivesRestart() throws Exception {
+        FocusState expected;
+        String migrated;
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            FocusService service = service(repository, CLOCK);
+            service.addClass(CLASS);
+            service.addTask(TASK);
+            service.addSession(manual().asCompleted());
+            expected = repository.load().orElseThrow();
+            writePayload(database, legacyPayload(expected).toString());
+
+            assertEquals(expected, repository.load().orElseThrow());
+            migrated = readPayload(database);
+            assertFalse(migrated.contains("planFrom"));
+            assertFalse(migrated.contains("breakMinutes"));
+            assertFalse(migrated.contains("maxSessionMinutes"));
+            assertFalse(migrated.contains("preferencesConfigured"));
+            assertFalse(migrated.contains("planEdited"));
+        }
+        try (Database database = Database.open(directory)) {
+            assertEquals(expected, new FocusRepository(database).load().orElseThrow());
+            assertEquals(migrated, readPayload(database));
+            assertState(expected, service(new FocusRepository(database), CLOCK));
+        }
+    }
+
+    @Test
+    void rejectsUnknownFieldsWithoutPartiallyMigratingSnapshot() {
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            service(repository, CLOCK).addTask(TASK);
+            ObjectNode legacy = legacyPayload(repository.load().orElseThrow());
+            legacy.put("unexpectedFutureField", true);
+            String original = legacy.toString();
+            writePayload(database, original);
+
+            assertThrows(PersistenceException.class, repository::load);
+            assertEquals(original, readPayload(database));
+        }
+    }
+
+    @Test
+    void failedMigrationSavePreservesOriginalSnapshotAndCanBeRetried() {
+        try (Database database = Database.open(directory)) {
+            FocusRepository repository = new FocusRepository(database);
+            service(repository, CLOCK).addTask(TASK);
+            FocusState expected = repository.load().orElseThrow();
+            String original = legacyPayload(expected).toString();
+            writePayload(database, original);
+            database.transaction(connection -> {
+                try (var sql = connection.createStatement()) {
+                    sql.execute("CREATE TRIGGER reject_migration BEFORE UPDATE ON focus_state "
+                            + "BEGIN SELECT RAISE(ABORT, 'Injected migration failure'); END");
+                }
+                return null;
+            });
+
+            assertThrows(PersistenceException.class, repository::load);
+            assertEquals(original, readPayload(database));
+            database.transaction(connection -> {
+                try (var sql = connection.createStatement()) {
+                    sql.execute("DROP TRIGGER reject_migration");
+                }
+                return null;
+            });
+            assertEquals(expected, repository.load().orElseThrow());
+        }
+    }
+
+    private static ObjectNode legacyPayload(FocusState state) {
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        ObjectNode root = mapper.valueToTree(state);
+        root.put("preferencesConfigured", true);
+        root.put("planEdited", false);
+        ObjectNode preferences = (ObjectNode) root.get("preferences");
+        preferences.put("planFrom", "2026-11-16");
+        preferences.put("breakMinutes", 10);
+        preferences.put("maxSessionMinutes", 60);
+        return root;
+    }
+
+    private static void writePayload(Database database, String payload) {
+        database.transaction(connection -> {
+            try (var sql = connection.prepareStatement("UPDATE focus_state SET payload=? WHERE singleton=1")) {
+                sql.setString(1, payload);
+                sql.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    private static String readPayload(Database database) {
+        return database.call(connection -> {
+            try (var sql = connection.createStatement();
+                 var rows = sql.executeQuery("SELECT payload FROM focus_state WHERE singleton=1")) {
+                assertTrue(rows.next());
+                return rows.getString(1);
+            }
+        });
     }
 
     @Test
